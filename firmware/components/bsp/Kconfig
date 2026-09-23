@@ -42,10 +42,12 @@ config BSP_LCD_PIN_BL
 config BSP_LCD_SPI_CLK_MHZ
     int "SPI clock (MHz)"
     range 10 80
-    default 80
+    default 40
     help
-        The Waveshare board and GC9A01A are rated to 80 MHz.  Drop to 40 MHz
-        if you see shimmering or torn pixels.
+        The Waveshare board and GC9A01A are rated to 80 MHz, but the panel
+        transfer is a peak-current event and this board browns out easily on
+        USB power.  40 MHz is plenty for partial-buffer updates; raise it once
+        the supply is known good.
 
 config BSP_LCD_INVERT_COLOR
     bool "Invert panel colours"
@@ -53,6 +55,22 @@ config BSP_LCD_INVERT_COLOR
     help
         GC9A01A panels on the Waveshare board are normally driven inverted.
         Turn this off if the whole dial looks like a colour negative.
+
+config BSP_LCD_SWAP_XY
+    bool "Exchange X and Y axes (90 degree rotation)"
+    default n
+    help
+        Maps to the MV bit of MADCTL.  Together with the two mirror options
+        this gives all eight axis mappings; change them if the dial comes up
+        rotated or mirrored relative to the board's natural upright position.
+
+config BSP_LCD_MIRROR_X
+    bool "Mirror horizontally (180/90 degree combinations)"
+    default n
+
+config BSP_LCD_MIRROR_Y
+    bool "Mirror vertically (180/90 degree combinations)"
+    default n
 
 config BSP_LCD_SWAP_RGB565_BYTES
     bool "Byte-swap RGB565 before SPI transmit"
@@ -72,6 +90,10 @@ endmenu
 config BSP_BACKLIGHT_DEFAULT_PERCENT
     int "Backlight level at boot (0-100)"
     range 0 100
-    default 85
+    default 60
+    help
+        The backlight is the board's biggest current draw, and this board
+        browns out easily.  Bring it up with `backlight 100` once the supply
+        is known good.
 
 endmenu

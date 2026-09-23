@@ -47,6 +47,24 @@
 #define LCD_CLK_HZ   (CONFIG_BSP_LCD_SPI_CLK_MHZ * 1000 * 1000)
 #define LCD_BUF_LINES CONFIG_BSP_LCD_BUFFER_LINES
 
+/* ESP-IDF does not emit CONFIG_* for boolean options left at their default of
+ * n, so normalise them here rather than testing with #ifdef at each use. */
+#ifdef CONFIG_BSP_LCD_SWAP_XY
+#define LCD_SWAP_XY  true
+#else
+#define LCD_SWAP_XY  false
+#endif
+#ifdef CONFIG_BSP_LCD_MIRROR_X
+#define LCD_MIRROR_X true
+#else
+#define LCD_MIRROR_X false
+#endif
+#ifdef CONFIG_BSP_LCD_MIRROR_Y
+#define LCD_MIRROR_Y true
+#else
+#define LCD_MIRROR_Y false
+#endif
+
 #define LVGL_TASK_STACK   8192
 #define LVGL_TASK_PRIO    4
 #define LVGL_TASK_AFFINITY 1
@@ -251,7 +269,10 @@ static esp_err_t panel_init(void)
     ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(s_panel), k_tag, "panel reset");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_panel), k_tag, "panel init");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_invert_color(s_panel, CONFIG_BSP_LCD_INVERT_COLOR), k_tag, "invert");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(s_panel, false, false), k_tag, "mirror");
+    if (LCD_SWAP_XY) {
+        ESP_RETURN_ON_ERROR(esp_lcd_panel_swap_xy(s_panel, true), k_tag, "swap_xy");
+    }
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(s_panel, LCD_MIRROR_X, LCD_MIRROR_Y), k_tag, "mirror");
     ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_panel, true), k_tag, "disp on");
 
     ESP_LOGI(k_tag, "GC9A01A up: %dx%d @ %d MHz", LCD_H_RES, LCD_V_RES, CONFIG_BSP_LCD_SPI_CLK_MHZ);

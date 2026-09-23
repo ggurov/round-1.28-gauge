@@ -138,6 +138,20 @@ static int cmd_backlight(int argc, char **argv)
     return 0;
 }
 
+static int cmd_redraw(int argc, char **argv)
+{
+    (void)argc;
+    (void)argv;
+    if (!bsp_lvgl_lock(1000)) {
+        printf("could not take the LVGL lock\n");
+        return 1;
+    }
+    lv_obj_invalidate(lv_screen_active());
+    bsp_lvgl_unlock();
+    printf("Full redraw requested.\n");
+    return 0;
+}
+
 static int cmd_free(int argc, char **argv)
 {
     (void)argc;
@@ -189,6 +203,7 @@ esp_err_t app_console_start(void)
         { .command = "demo", .help = "Simulator: demo [on|off|sweep]", .func = &cmd_demo },
         { .command = "value", .help = "Drive the needle: value <number>", .func = &cmd_value },
         { .command = "backlight", .help = "Backlight: backlight [0-100]", .func = &cmd_backlight },
+        { .command = "redraw", .help = "Force a full screen repaint", .func = &cmd_redraw },
         { .command = "free", .help = "Show heap usage", .func = &cmd_free },
         { .command = "version", .help = "Show build information", .func = &cmd_version },
     };
