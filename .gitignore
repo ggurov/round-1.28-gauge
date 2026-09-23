@@ -4,7 +4,15 @@ firmware/managed_components/
 firmware/sdkconfig
 firmware/sdkconfig.old
 firmware/dependencies.lock
+tests/device/build/
+tests/device/sdkconfig
+tests/device/sdkconfig.old
+tests/device/dependencies.lock
+tests/device/managed_components/
 *.bin.tmp
+
+# Host build output
+/build/
 
 # Host tooling
 tools/__pycache__/
