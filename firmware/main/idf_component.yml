@@ -1,0 +1,7 @@
+# Managed components pulled from components.espressif.com at configure time.
+dependencies:
+  idf: ">=5.3"
+  # Graphics library - the whole point of this project.
+  lvgl/lvgl: "^9.2"
+  # GC9A01A 240x240 round panel driver over SPI.
+  espressif/esp_lcd_gc9a01: "^2"

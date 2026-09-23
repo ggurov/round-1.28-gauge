@@ -1,0 +1,19 @@
+# ESP-IDF
+firmware/build/
+firmware/managed_components/
+firmware/sdkconfig
+firmware/sdkconfig.old
+firmware/dependencies.lock
+*.bin.tmp
+
+# Host tooling
+tools/__pycache__/
+tools/.venv/
+tools/preview/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

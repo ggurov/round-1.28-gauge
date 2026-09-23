@@ -1,0 +1,13 @@
+# Partition layout for the Waveshare ESP32-S3-LCD-1.28 (16 MB Winbond W25Q128JV).
+#
+# Two OTA app slots are reserved so the gauge can be reflashed over the air (or
+# via any future transport) without needing the physical BOOT button, which is
+# the only way into the ROM bootloader on this board.
+#
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+otadata,    data, ota,     0xF000,   0x2000,
+phy_init,   data, phy,     0x11000,  0x1000,
+ota_0,      app,  ota_0,   0x20000,  0x400000,
+ota_1,      app,  ota_1,   0x420000, 0x400000,
+storage,    data, spiffs,  0x820000, 0x200000,

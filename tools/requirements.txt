@@ -1,0 +1,6 @@
+# Host-side tooling dependencies (development machine only).
+#
+#   python -m pip install -r tools/requirements.txt
+#
+pyserial>=3.5      # used by tools/probe.py and tools/flash.ps1
+esptool>=4.7       # standalone flashing / chip identification
