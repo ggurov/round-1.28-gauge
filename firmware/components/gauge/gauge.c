@@ -193,7 +193,16 @@ static void build_glow(gauge_t *g)
     lv_obj_set_style_bg_opa(glow, LV_OPA_TRANSP, LV_PART_KNOB);
     lv_obj_set_style_pad_all(glow, 0, 0);
 
-    lv_arc_set_bg_angles(glow, g->cfg.rotation, g->cfg.rotation + g->cfg.angle_range);
+    /*
+     * lv_arc angles are degrees clockwise from 3 o'clock and must be given
+     * within 0..360.  A 270-degree sweep starting at rotation 135 ends at 405,
+     * which LVGL does not wrap for us - it would draw from 135 to 45 the short
+     * way, i.e. a quarter of the dial.  Normalise both ends; the wrap is then
+     * expressed by start > end.
+     */
+    int a0 = ((g->cfg.rotation % 360) + 360) % 360;
+    int a1 = (((g->cfg.rotation + g->cfg.angle_range) % 360) + 360) % 360;
+    lv_arc_set_bg_angles(glow, a0, a1);
     lv_arc_set_angles(glow, 0, 0);
 
     lv_obj_set_style_arc_width(glow, glow_w, LV_PART_MAIN);

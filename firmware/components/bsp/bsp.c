@@ -78,6 +78,42 @@ static SemaphoreHandle_t s_lvgl_mutex;
 static esp_timer_handle_t s_tick_timer;
 static int s_backlight = -1;
 
+/* Flush diagnostics.  `flush stats` on the console prints these. */
+static volatile uint32_t s_flush_count;
+static volatile uint32_t s_flush_errors;
+static volatile uint32_t s_flush_timeouts;
+static volatile bool     s_flush_sync = true;
+static SemaphoreHandle_t s_flush_done;
+
+void bsp_flush_set_sync(bool sync);
+bool bsp_flush_get_sync(void);
+void bsp_flush_get_stats(uint32_t *count, uint32_t *errors, uint32_t *timeouts);
+
+void bsp_flush_set_sync(bool sync)
+{
+    s_flush_sync = sync;
+}
+
+bool bsp_flush_get_sync(void)
+{
+    return s_flush_sync;
+}
+
+void bsp_flush_get_stats(uint32_t *count, uint32_t *errors, uint32_t *timeouts)
+{
+    if (count)    *count = s_flush_count;
+    if (errors)   *errors = s_flush_errors;
+    if (timeouts) *timeouts = s_flush_timeouts;
+}
+
+#ifdef CONFIG_BSP_LCD_RENDER_FULL
+const char *bsp_render_mode(void)      { return "full"; }
+uint32_t bsp_draw_buffer_bytes(void)   { return LCD_H_RES * LCD_V_RES * sizeof(uint16_t); }
+#else
+const char *bsp_render_mode(void)      { return "partial"; }
+uint32_t bsp_draw_buffer_bytes(void)   { return LCD_H_RES * LCD_BUF_LINES * sizeof(uint16_t); }
+#endif
+
 /* -------------------------------------------------------------------------- */
 /* byte order                                                                 */
 /* -------------------------------------------------------------------------- */
@@ -109,6 +145,14 @@ static bool lcd_color_trans_done_cb(esp_lcd_panel_io_handle_t io,
     (void)io;
     (void)edata;
     lv_display_t *disp = (lv_display_t *)user_ctx;
+    if (s_flush_sync) {
+        /* Hand back to lcd_flush_cb, which owns the flush_ready() call. */
+        BaseType_t woken = pdFALSE;
+        if (s_flush_done) {
+            xSemaphoreGiveFromISR(s_flush_done, &woken);
+        }
+        return woken == pdTRUE;
+    }
     if (disp) {
         lv_display_flush_ready(disp);
     }
@@ -126,18 +170,57 @@ static void lcd_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_
     const int w = area->x2 - area->x1 + 1;
     const int h = area->y2 - area->y1 + 1;
 
+    s_flush_count++;
+
     swap_rgb565_bytes(px_map, (size_t)w * (size_t)h);
 
-    if (esp_lcd_panel_draw_bitmap(panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map) != ESP_OK) {
-        /* Never leave LVGL waiting on a transfer that will never complete. */
-        lv_display_flush_ready(disp);
+    if (s_flush_sync) {
+        /* Drain any previous transfer before touching the buffer again. */
+        if (s_flush_done) {
+            xSemaphoreTake(s_flush_done, 0);
+        }
     }
+
+    if (esp_lcd_panel_draw_bitmap(panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map) != ESP_OK) {
+        s_flush_errors++;
+        lv_display_flush_ready(disp);
+        return;
+    }
+
+    if (s_flush_sync) {
+        /*
+         * Complete the transfer before telling LVGL the buffer is free.  The
+         * async path hands this to the ISR, which lets LVGL start rendering
+         * the next area while the DMA is still reading this one; if anything
+         * in that handshake slips, whole tiles are lost and only come back
+         * when the needle sweeps over them again.
+         */
+        if (s_flush_done && xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(500)) != pdTRUE) {
+            s_flush_timeouts++;
+        }
+    }
+
+    lv_display_flush_ready(disp);
 }
 
 static void lvgl_tick_cb(void *arg)
 {
     (void)arg;
     lv_tick_inc(LVGL_TICK_PERIOD_US / 1000);
+}
+
+/*
+ * This board loses display tiles: an area is painted correctly, then goes black
+ * a fraction of a second later and stays black until something invalidates it
+ * again.  Repainting the whole screen periodically makes the dial heal itself.
+ */
+static void heal_timer_cb(lv_timer_t *t)
+{
+    (void)t;
+    lv_obj_t *scr = lv_screen_active();
+    if (scr) {
+        lv_obj_invalidate(scr);
+    }
 }
 
 static void lvgl_task(void *arg)
@@ -292,17 +375,33 @@ esp_err_t bsp_display_init(void)
     s_lvgl_mutex = xSemaphoreCreateRecursiveMutex();
     ESP_RETURN_ON_FALSE(s_lvgl_mutex, ESP_ERR_NO_MEM, k_tag, "lvgl mutex");
 
+    s_flush_done = xSemaphoreCreateBinary();
+    ESP_RETURN_ON_FALSE(s_flush_done, ESP_ERR_NO_MEM, k_tag, "flush semaphore");
+
     lv_init();
 
     s_disp = lv_display_create(LCD_H_RES, LCD_V_RES);
     ESP_RETURN_ON_FALSE(s_disp, ESP_ERR_NO_MEM, k_tag, "lv_display_create");
     lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
 
-    const size_t buf_bytes = LCD_H_RES * LCD_BUF_LINES * sizeof(uint16_t);
+    const size_t buf_bytes = LCD_H_RES * LCD_V_RES * sizeof(uint16_t);
+#ifdef CONFIG_BSP_LCD_RENDER_FULL
+    /*
+     * One full-screen buffer, rendered and pushed as a single rectangle.  See
+     * the Kconfig help: the partial path loses tiles on this board.
+     */
     void *buf1 = heap_caps_malloc(buf_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    void *buf2 = heap_caps_malloc(buf_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    ESP_RETURN_ON_FALSE(buf1 && buf2, ESP_ERR_NO_MEM, k_tag, "draw buffers (%u B each)", (unsigned)buf_bytes);
-    lv_display_set_buffers(s_disp, buf1, buf2, buf_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    ESP_RETURN_ON_FALSE(buf1, ESP_ERR_NO_MEM, k_tag, "draw buffer (%u B)", (unsigned)buf_bytes);
+    lv_display_set_buffers(s_disp, buf1, NULL, buf_bytes, LV_DISPLAY_RENDER_MODE_FULL);
+    ESP_LOGI(k_tag, "render mode: FULL (%u B single buffer)", (unsigned)buf_bytes);
+#else
+    const size_t part_bytes = LCD_H_RES * LCD_BUF_LINES * sizeof(uint16_t);
+    void *buf1 = heap_caps_malloc(part_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    void *buf2 = heap_caps_malloc(part_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
+    ESP_RETURN_ON_FALSE(buf1 && buf2, ESP_ERR_NO_MEM, k_tag, "draw buffers (%u B each)", (unsigned)part_bytes);
+    lv_display_set_buffers(s_disp, buf1, buf2, part_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    ESP_LOGI(k_tag, "render mode: PARTIAL (%u B x2 buffers)", (unsigned)part_bytes);
+#endif
     lv_display_set_flush_cb(s_disp, lcd_flush_cb);
 
     esp_err_t err = panel_init();
@@ -329,6 +428,9 @@ esp_err_t bsp_display_init(void)
         lv_obj_t *scr = lv_screen_active();
         lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
         lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+#if CONFIG_BSP_LCD_HEAL_PERIOD_MS > 0
+        lv_timer_create(heal_timer_cb, CONFIG_BSP_LCD_HEAL_PERIOD_MS, NULL);
+#endif
         bsp_lvgl_unlock();
     }
 

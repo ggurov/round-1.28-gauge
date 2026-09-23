@@ -42,12 +42,12 @@ config BSP_LCD_PIN_BL
 config BSP_LCD_SPI_CLK_MHZ
     int "SPI clock (MHz)"
     range 10 80
-    default 40
+    default 20
     help
-        The Waveshare board and GC9A01A are rated to 80 MHz, but the panel
-        transfer is a peak-current event and this board browns out easily on
-        USB power.  40 MHz is plenty for partial-buffer updates; raise it once
-        the supply is known good.
+        This board's 3.3V rail sags when the panel is driven hard, which
+        corrupts SPI traffic and browns the chip out.  20 MHz keeps the peak
+        current down; the Waveshare board and GC9A01A are good to 80 MHz on a
+        supply that can take it.
 
 config BSP_LCD_INVERT_COLOR
     bool "Invert panel colours"
@@ -84,16 +84,38 @@ config BSP_LCD_BUFFER_LINES
     int "Draw buffer height in lines"
     range 8 120
     default 40
+    depends on !BSP_LCD_RENDER_FULL
+
+config BSP_LCD_RENDER_FULL
+    bool "Render whole frames instead of partial tiles"
+    default n
+    help
+        Tried as a fix for lost tiles; it renders even less on this board (only
+        the root object's border survives), so it is off by default.  Kept
+        because it is the right mode on a healthy board and makes a useful
+        A/B test.
 
 endmenu
 
 config BSP_BACKLIGHT_DEFAULT_PERCENT
     int "Backlight level at boot (0-100)"
     range 0 100
-    default 60
+    default 35
     help
-        The backlight is the board's biggest current draw, and this board
-        browns out easily.  Bring it up with `backlight 100` once the supply
-        is known good.
+        The backlight is the board's biggest current draw and this board's
+        3.3V rail is marginal.  Start low and raise it with `backlight 100`
+        once the supply is known good.
+
+config BSP_LCD_HEAL_PERIOD_MS
+    int "Full repaint interval (ms, 0 to disable)"
+    range 0 10000
+    default 1000
+    help
+        This board loses display tiles: an area is painted correctly, then goes
+        black and stays black until something invalidates it again.  A periodic
+        full repaint makes the dial come back on its own instead of staying
+        broken.  Costs one full-screen transfer per interval, so keep it long
+        unless the tiles are being lost often.  `redraw` on the console forces
+        one by hand.
 
 endmenu

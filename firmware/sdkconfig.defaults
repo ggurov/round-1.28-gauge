@@ -33,8 +33,13 @@ CONFIG_ESP_CONSOLE_UART_NUM=0
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
-# --- PSRAM -------------------------------------------------------------------
-# Present (2 MB, in-package, quad) but deliberately left OFF for the first
+# --- Display ----------------------------------------------------------------
+# Full-frame rendering: the partial-tile path loses regions on this board.
+CONFIG_BSP_LCD_RENDER_FULL=n
+CONFIG_BSP_LCD_SPI_CLK_MHZ=20
+CONFIG_BSP_BACKLIGHT_DEFAULT_PERCENT=35
+
+# --- PSRAM -------------------------------------------------------------------# Present (2 MB, in-package, quad) but deliberately left OFF for the first
 # bring-up: nothing in the demo needs it and keeping it disabled removes a
 # whole class of boot-time failure modes.  Flip CONFIG_SPIRAM=y to enable.
 CONFIG_SPIRAM=n

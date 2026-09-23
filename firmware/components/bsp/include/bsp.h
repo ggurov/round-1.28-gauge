@@ -30,6 +30,23 @@ int  bsp_backlight_get(void);
 bool bsp_lvgl_lock(int timeout_ms);
 void bsp_lvgl_unlock(void);
 
+/*
+ * Flush behaviour and diagnostics.
+ *
+ * In synchronous mode the flush callback waits for the SPI transfer to finish
+ * before releasing the LVGL draw buffer, which costs render/DMA overlap but
+ * makes lost tiles impossible.  In asynchronous mode the ISR releases the
+ * buffer, which is faster but relies on the handshake being tight.
+ */
+void bsp_flush_set_sync(bool sync);
+bool bsp_flush_get_sync(void);
+void bsp_flush_get_stats(uint32_t *count, uint32_t *errors, uint32_t *timeouts);
+
+/* "full" or "partial", matching CONFIG_BSP_LCD_RENDER_FULL. */
+const char *bsp_render_mode(void);
+/* Bytes per draw buffer. */
+uint32_t bsp_draw_buffer_bytes(void);
+
 #ifdef __cplusplus
 }
 #endif

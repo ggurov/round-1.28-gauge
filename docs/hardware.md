@@ -128,6 +128,127 @@ esptool's own `--before default_reset` sequence fails the same way with
 `CONFIG_PARTITION_TABLE_CUSTOM` is in use, so the bootloader is not run in
 `--bootloader-only` mode and the two OTA slots are ready.
 
+## Known hardware fault on this unit: the display
+
+Separate from the flashing trouble below, the panel does not paint reliably.
+A large contiguous region of the dial - typically a quarter to a half of it -
+goes unpainted or drops out and stays that way.
+
+What it looks like: the white bezel ring always draws, and the green band,
+ticks and numerals draw correctly *where* they draw, but whole sectors of the
+dial are missing.  When the needle is moving the missing region changes, which
+reads as flickering; with the needle frozen the missing region stays missing.
+
+### What has been ruled out
+
+Every one of these was tested on hardware:
+
+| Changed | Effect on the missing regions |
+|---|---|
+| SPI clock 80 / 40 / 20 MHz | no change |
+| Backlight 35 / 60 / 100 % | no change (100 % removes PWM entirely) |
+| Refresh rate 2 / 5 / 10 / 20 / 30 fps | no change |
+| Sync flush (wait for DMA before releasing the buffer) | no change |
+| Full-frame render mode instead of partial tiles | **worse** - only the bezel drew |
+| Needle frozen vs animated | missing region changes only because the needle invalidates it |
+| Driver error counters | `flushes: 3629, driver errs: 0, timeouts: 0` |
+
+Two observations narrow it down a lot:
+
+1. **It happens with nothing being drawn.** With `demo off` and a fixed
+   `value`, LVGL has nothing invalidated and issues no flushes at all - the
+   image is static on our side - yet the missing region still appears and
+   stays.  So the corruption is not coming from the render or flush path.
+2. **It is not the brownout.** A 40 s watch of the console saw zero
+   spontaneous reboots while the artifact was present.
+
+### Leading hypothesis
+
+A partial connection on the panel's flex.  A whole *contiguous block* of the
+display staying dark, with everything else crisp, is what missing source-driver
+lines look like - and it would be intermittent if the joint is marginal.
+
+Worth trying before replacing anything:
+
+* **Reseat the display flex** if your revision has a connector rather than a
+  bonded FPC.  Press it home and re-test.
+* Try the board on a **different 5V source** (powered hub, or 5V into VSYS) to
+  rule out the rail sagging under panel load.
+* Failing that, **swap in another board.**  These are inexpensive and all of
+  the software here is known good.
+
+## Known hardware fault on this unit: flashing
+
+This specific board has a reproducible fault that makes programming it
+unreliable. It is documented here in detail because it is a hardware defect,
+not a software one, and it is worth raising with the vendor.
+
+### Symptom
+
+esptool can always identify the chip, read the MAC and read flash info. It
+cannot complete a large `write_flash`:
+
+| Single write size | Result |
+|---|---|
+| 16 KB | **OK**, hash verified, every time |
+| 32 KB | `No more data to read from the serial port` |
+| 64 KB | same |
+| 128 KB | cannot even reconnect afterwards |
+| 869 KB (the app) | dies at 3.9 %, i.e. just after the first 16 KB block |
+
+The failure point is deterministic - it is always the same byte, not a random
+glitch. After a failed write the chip **hangs**: it does not reset, does not
+produce UART output, and does not answer esptool. Only a physical RESET
+recovers it. (If it were resetting, holding BOOT would send it straight back
+into the bootloader; it does not.)
+
+### What has been ruled out
+
+* **Brownout.** The bootloader does report `rst:0xf (BROWNOUT_RST)` during
+  image hashing, and that is real, but it is not what kills the flash: the
+  write failure is deterministic at exactly 16 KB at any baud, and the chip
+  hangs rather than resetting. Lowering the LCD SPI clock (80 -> 40 MHz), the
+  backlight (85 % -> 60 %), the flash frequency (80 -> 40 MHz) and the image
+  size (945 -> 869 KB) did not move the boundary.
+* **esptool baud / stub baud mismatch.** Flashing at 115200 with no baud
+  change at all fails identically.
+* **esptool's flasher stub.** `--no-stub` (driving the ROM loader directly)
+  gets as far as `Failed to configure SPI flash pins (result was C000: Bad
+  data length)`.
+* **Compression.** `--no-compress` fails identically; the stub writes 16 KB
+  blocks either way.
+* **The USB path.** Two cables, two ports, no hub, and an extension cable
+  removed from the chain. The CH343P stays enumerated and healthy throughout -
+  it is the chip that stops answering, and it recovers on RESET without a
+  re-enumeration.
+
+### One flash did succeed
+
+Before any of this the board accepted a complete 945 KB image in one go, and
+that firmware ran (see below). So the hardware is marginal rather than dead,
+and it appears to have degraded over the session.
+
+### Working around it
+
+`tools/flash_chunked.py` splits an image into 16 KB pieces and hands them all
+to esptool as separate regions in a **single** invocation, so the chip is never
+disconnected between them:
+
+```
+python tools/flash_chunked.py --port COM6 0x20000 firmware/build/round_gauge.bin
+```
+
+That is the closest thing to a workaround found so far. It has not yet
+completed on this unit.
+
+### Recommendation
+
+Treat this board as faulty and try another one - these are inexpensive, and all
+of the software in this repository is known good. If a replacement behaves the
+same way, the next suspects are the USB port's power delivery (try a powered
+hub, or feed 5 V into the VSYS pin so the board is not drawing from USB) and
+the CH343P bridge.
+
 ## Notes for later
 
 * **PSRAM** is present but disabled in `sdkconfig.defaults`. The 240×240 demo

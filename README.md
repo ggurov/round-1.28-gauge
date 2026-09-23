@@ -49,6 +49,8 @@ tools/
   render_preview.py   host-rendered dial mock-ups (tools/preview/*.png)
   probe.py            identify the board / dump chip info
   flash.ps1           reboot into the ROM bootloader and flash
+  flash_chunked.py    flash in 16 KB pieces (workaround, see docs/hardware.md)
+  run_device_tests.py collect the on-target Unity results
 docs/
   hardware.md      what the board is and how it was discovered
   development.md   toolchain, build, flash and recovery workflow
@@ -105,6 +107,23 @@ There are two ways in:
 
 After flashing you may need to press **RESET** once, because the same missing
 reset line means esptool cannot restart the chip afterwards.
+
+### This unit cannot be flashed normally
+
+The board in this repository's history has a **hardware fault**: any single
+esptool write larger than 16 KB hangs the chip, deterministically, and it needs
+a physical RESET to recover. Everything smaller than that works every time.
+Full evidence, what was ruled out, and the workaround:
+[`docs/hardware.md`](docs/hardware.md#known-hardware-fault-on-this-unit-flashing).
+
+Until that is resolved, flash in 16 KB pieces inside a single esptool session:
+
+```powershell
+python tools\flash_chunked.py --port COM6 0x20000 firmware\build\round_gauge.bin
+```
+
+or use any other board — the software in this repository is known good, and has
+been seen running on the display.
 
 ## Console
 
