@@ -131,7 +131,7 @@ static esp_err_t rebuild_gauge(void)
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-    lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollable(scr, false);
 
     s_gauge = gauge_create(scr, s_preset->cfg);
 

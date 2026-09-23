@@ -9,11 +9,20 @@
 
 #include <string.h>
 
-/* The linker symbol name is derived from the path inside the component, with
- * every non-alphanumeric character replaced by '_'.  If this ever fails to
- * resolve, build once and read the real name out of the link error / nm. */
-extern const uint8_t needle_blob_start[] asm("_binary_assets_needle_argb8888_bin_start");
-extern const uint8_t needle_blob_end[] asm("_binary_assets_needle_argb8888_bin_end");
+/*
+ * The linker symbols come from ESP-IDF's generated .S file for the embedded
+ * asset.  Note that despite the header's recommendation, the symbol uses only
+ * the *file name*, not the path inside the component:
+ *
+ *     .global _binary_needle_argb8888_bin_start
+ *
+ * If this ever fails to resolve, the on-target test
+ * `needle: embedded blob resolves to an image descriptor` fails loudly rather
+ * than the needle silently disappearing from the dial.  You can also read the
+ * real name out of build/needle_argb8888.bin.S after a build.
+ */
+extern const uint8_t needle_blob_start[] asm("_binary_needle_argb8888_bin_start");
+extern const uint8_t needle_blob_end[] asm("_binary_needle_argb8888_bin_end");
 
 static lv_image_dsc_t s_needle_dsc;
 static bool s_bound;

@@ -82,6 +82,26 @@ tools\flash.ps1 -Port COM7
 It opens the port, sends the `bootloader` command, waits for the chip to
 re-enumerate, then runs `idf.py flash monitor`.
 
+## Testing
+
+```powershell
+tools\test.ps1                  # host unit tests + contract checks  (~2 s)
+tools\test.ps1 -Filter math     # only suites whose name contains "math"
+tools\test.ps1 -Device          # also build, flash and run on the board
+```
+
+Run this before flashing anything: the host tests take about a second and cover
+all the geometry, preset validation and slew-filter maths, so a broken dial is
+caught on the desktop rather than on the panel.
+
+Tests register themselves — `TF_TEST(suite, name)` on the host and
+`TEST_CASE(name, "[tag]")` on the target — so there is no list to maintain. See
+[`tests/README.md`](../tests/README.md) for what each suite covers.
+
+The host tests need a native compiler. They default to MSYS2's
+`C:\msys64\mingw64\bin\gcc.exe`; override with `-Gcc <path>`. Nothing else in
+the project needs it.
+
 ## Configuration
 
 Board-level settings live under **`menuconfig → Round gauge BSP`** so you can
@@ -105,6 +125,22 @@ Deliberate defaults in `sdkconfig.defaults`:
 
 ## Design notes
 
+### Layering, and why it matters for tests
+
+The widget is split so that everything deciding *where* things land is free of
+LVGL:
+
+| File | Depends on | Tested by |
+|---|---|---|
+| `gauge_math.c` | libm only | host unit tests |
+| `gauge_theme.c` | nothing | host unit tests |
+| `gauge_presets.c` | string.h | host unit tests |
+| `gauge.c` | LVGL | on-target Unity tests |
+| `gauge_needle.c` | LVGL + embedded blob | both |
+
+That is what lets 63 tests run in under a second with no hardware. Resist the
+temptation to move arithmetic into `gauge.c`.
+
 ### Why LVGL
 
 The gauge needs anti-aliased arcs, rotated sprites and cheap partial redraws.
@@ -114,6 +150,18 @@ major/minor ticks, numerals and coloured sections natively, and
 whole dial is vector, so changing the range or tick spacing re-renders instead
 of requiring new artwork.
 
+The one thing worth knowing about `lv_scale` is where it puts things, because
+the gauge's geometry is derived from it:
+
+```
+rail radius      = scale_diameter / 2
+major tick       = rail .. rail - tick_major_len
+numeral centre   = rail - tick_major_len - pad_radial - 15 - letter_space
+```
+
+That `15` is LVGL's private `LV_SCALE_DEFAULT_LABEL_GAP`. It is mirrored as
+`GAUGE_LABEL_GAP` and a contract check fails if LVGL ever changes it.
+
 ### Why the needle is a sprite
 
 The blade is rasterised once by [`tools/gen_needle.py`](../tools/gen_needle.py)
@@ -122,16 +170,19 @@ tints at runtime through `image_recolor`. That means changing the needle colour
 is a one-line theme edit, not a re-export.
 
 The blob is embedded with ESP-IDF's `EMBED_FILES` rather than committed as a
-generated `.c` array — a 123 KB binary instead of a ~900 KB source file, and it
-compiles instantly. `gauge_needle.c` wraps it in an `lv_image_dsc_t` at runtime.
+generated `.c` array — a 121 KB binary instead of a ~900 KB source file, and it
+compiles instantly. `gauge_needle.c` wraps it in an `lv_image_dsc_t` at runtime;
+the linker symbol name is derived from the asset path, so a test asserts the
+descriptor actually resolves.
 
 ### Why the needle slews
 
-`gauge_set_value()` only stores a target. A 16 ms `lv_timer` moves
-`displayed` toward it with an exponential approach capped by a maximum slew
-rate, so the needle accelerates off a stop and settles like a real
-moving-coil movement. `slew_time` in the config is the time for a full-scale
-move — 0.30 s for a tachometer, 2.0 s for a temperature gauge.
+`gauge_set_value()` only stores a target. A 16 ms `lv_timer` moves `displayed`
+toward it with an exponential approach capped by a maximum slew rate, so the
+needle accelerates off a stop and settles like a real moving-coil movement.
+`slew_time` in the config is the time for a full-scale ramp — 0.30 s for a
+tachometer, 2.0 s for a temperature gauge — and the exponential tail adds about
+half as much again to settle.
 
 ### Why the console comes first
 

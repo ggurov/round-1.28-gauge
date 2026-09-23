@@ -1,72 +1,90 @@
 /*
- * gauge_theme.h - palette + typography for the gauge renderer.
+ * gauge_theme.h - palette, typography and tick geometry for the renderer.
  *
- * A theme is pure data so a gauge can be re-skinned at runtime.  Add a new
- * theme by creating another gauge_theme_t and pointing gauge_config_t::theme
- * at it.
+ * Free of LVGL on purpose: colours are 24-bit 0xRRGGBB values that gauge.c
+ * converts with lv_color_hex(), and fonts are an enum that gauge.c maps onto
+ * LVGL's built-in Montserrat faces.  That keeps themes testable on the host
+ * and makes the hex values directly comparable with tools/render_preview.py.
  */
 #pragma once
 
-#include "lvgl.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
+/* LVGL's built-in Montserrat sizes we actually enable in sdkconfig. */
+typedef enum {
+    GAUGE_FONT_10 = 0,
+    GAUGE_FONT_12,
+    GAUGE_FONT_14,
+    GAUGE_FONT_16,
+    GAUGE_FONT_18,
+    GAUGE_FONT_20,
+    GAUGE_FONT_30,
+    GAUGE_FONT_36,
+    GAUGE_FONT_COUNT
+} gauge_font_t;
+
 typedef struct {
     /* Dial */
-    lv_color_t face;          /* dial background                       */
-    lv_color_t face_inner;    /* subtle centre vignette                */
-    lv_color_t bezel;         /* outer ring                            */
-    lv_color_t bezel_shadow;  /* ring highlight / inner edge           */
+    uint32_t face;            /* dial background               0xRRGGBB */
+    uint32_t bezel;           /* outer ring                              */
 
     /* Scale */
-    lv_color_t tick_major;
-    lv_color_t tick_minor;
-    lv_color_t label;         /* numerals                              */
-    lv_color_t band;          /* arc rail running outside the ticks    */
-    lv_color_t band_glow;     /* wider, dimmer arc behind `band`       */
-    lv_color_t alarm;         /* warning/redline band colour           */
+    uint32_t tick_major;
+    uint32_t tick_minor;
+    uint32_t label;           /* numerals                                */
+    uint32_t band;            /* arc rail outside the ticks              */
+    uint32_t band_glow;       /* wider, dimmer arc behind `band`         */
+    uint32_t alarm;           /* warning / redline band                  */
 
     /* Needle */
-    lv_color_t needle;
-    lv_color_t needle_hub;
-    lv_color_t needle_hub_ring;
+    uint32_t needle;
+    uint32_t needle_hub;
+    uint32_t needle_hub_ring;
 
     /* Text */
-    lv_color_t value;         /* big numeric read-out                  */
-    lv_color_t caption;       /* "RPM"                                 */
-    lv_color_t unit;          /* "x1000 r/min"                         */
-    lv_color_t wordmark;      /* italic-style brand text               */
-    lv_color_t tagline;       /* small print under the wordmark        */
+    uint32_t value;           /* big numeric read-out                    */
+    uint32_t caption;         /* "RPM"                                   */
+    uint32_t unit;            /* "x1000 r/min"                           */
+    uint32_t wordmark;
+    uint32_t tagline;
 
     /* Typography */
-    const lv_font_t *font_label;    /* numerals on the scale  */
-    const lv_font_t *font_caption;
-    const lv_font_t *font_value;
-    const lv_font_t *font_unit;
-    const lv_font_t *font_wordmark;
-    const lv_font_t *font_tagline;
+    gauge_font_t font_label;
+    gauge_font_t font_caption;
+    gauge_font_t font_value;
+    gauge_font_t font_unit;
+    gauge_font_t font_wordmark;
+    gauge_font_t font_tagline;
 
-    /* Scale geometry, relative to the dial radius (0..1 of half the widget) */
+    /* Tick / band geometry, in pixels at 240x240 */
+    int band_gap;             /* black gap between bezel and the rail     */
+    int band_width;           /* rail thickness                           */
     int tick_major_len;
     int tick_minor_len;
     int tick_major_width;
     int tick_minor_width;
-    int band_width;           /* arc rail thickness                    */
-    int label_pad_radial;     /* gap between major tick and its numeral */
     int bezel_width;
     int hub_radius;
+    int label_pad_radial;     /* gap between major tick and its numeral   */
+    int label_letter_space;   /* must match the scale's text letter space */
 } gauge_theme_t;
 
-/* GReddy-inspired: black face, phosphor-green scale, orange blade needle,
- * magenta warning band.  The wordmark is deliberately our own - the layout
- * and palette evoke the classic 1990s Japanese gauge look without copying
- * anyone's trademark. */
+/*
+ * GReddy-inspired: black face, phosphor-green scale, orange blade needle,
+ * magenta warning band.  The wordmark shipped in the presets is our own - the
+ * layout and palette are a homage, not a copy of anyone's trademark.
+ */
 extern const gauge_theme_t gauge_theme_greddy;
 
-/* Same geometry, amber/white "motorsport" palette. */
+/* Same geometry, amber/red "motorsport" palette. */
 extern const gauge_theme_t gauge_theme_amber;
+
+/* Safely map an enum value onto a font table index. */
+int gauge_theme_font_index(gauge_font_t f);
 
 #ifdef __cplusplus
 }

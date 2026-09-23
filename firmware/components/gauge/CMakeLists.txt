@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "gauge.c"
+        "gauge_math.c"
         "gauge_theme.c"
         "gauge_presets.c"
         "gauge_needle.c"

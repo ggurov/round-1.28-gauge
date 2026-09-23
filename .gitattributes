@@ -1,0 +1,12 @@
+# Normalise line endings so Windows and Unix checkouts agree.
+* text=auto eol=lf
+
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# Generated assets
+*.bin  binary
+*.png  binary
+
+# ESP-IDF build artefacts (also in .gitignore)
+sdkconfig  -diff

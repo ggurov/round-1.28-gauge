@@ -32,17 +32,51 @@ Full discovery record, pinout and wiring notes: [`docs/hardware.md`](docs/hardwa
 firmware/
   components/
     bsp/     board support: SPI, GC9A01A panel, backlight PWM, LVGL port
-    gauge/   the reusable gauge widget, themes, presets, needle sprite
+    gauge/   the gauge widget
+             gauge_math.c    pure arithmetic  (host-testable)
+             gauge_theme.c   palettes         (host-testable)
+             gauge_presets.c the catalogue    (host-testable)
+             gauge.c         LVGL rendering
   main/      application: console, demo driver, boot
+tests/
+  host/      unit tests for the pure logic, run with the system GCC
+  py/        contract checks on LVGL, the generator and the preview renderer
+  device/    Unity app exercising the real LVGL tree on the ESP32-S3
 tools/
-  idf.bat          run idf.py with the toolchain environment loaded
-  gen_needle.py    rasterise the needle sprite -> gauge/assets/*.bin
-  probe.py         identify the board / dump chip info
-  flash.ps1        reboot into the ROM bootloader and flash
+  test.ps1            run every suite
+  idf.bat             run idf.py with the toolchain environment loaded
+  gen_needle.py       rasterise the needle sprite -> gauge/assets/*.bin
+  render_preview.py   host-rendered dial mock-ups (tools/preview/*.png)
+  probe.py            identify the board / dump chip info
+  flash.ps1           reboot into the ROM bootloader and flash
 docs/
   hardware.md      what the board is and how it was discovered
   development.md   toolchain, build, flash and recovery workflow
 ```
+
+## Tests
+
+Everything is covered by a suite, and tests register themselves where they live
+so there is no list to keep in sync.
+
+```powershell
+tools\test.ps1                  # host unit tests + contract checks (~2 s)
+tools\test.ps1 -Filter math     # only suites matching a name
+tools\test.ps1 -Device          # also build, flash and run on the board
+```
+
+The logic that decides where things land on the dial lives in `gauge_math.c`,
+`gauge_theme.c` and `gauge_presets.c`, all deliberately free of LVGL, so 63
+unit tests run on the host in under a second. Contract checks then guard the
+assumptions that would otherwise rot silently — that LVGL's private
+`LV_SCALE_DEFAULT_LABEL_GAP` is still what the layout maths assumes, that
+`gen_needle.py` and `gauge_needle_size.h` agree, that every font a theme asks
+for is actually enabled, and that the preview renderer matches the firmware.
+Finally `tests/device` runs Unity against the real LVGL widget tree with a
+headless display, so it passes even on a board with a dead panel.
+
+See [`tests/README.md`](tests/README.md) for what each suite covers and how to
+add a test.
 
 ## Quick start
 
@@ -92,7 +126,8 @@ display, so a dead panel can never lock you out.
 ## Adding a gauge
 
 Everything that distinguishes one instrument from another lives in
-`gauge_config_t`. Add a preset in
+`gauge_config_t` (`firmware/components/gauge/include/gauge_config.h`). Add a
+preset in
 [`gauge_presets.c`](firmware/components/gauge/gauge_presets.c):
 
 ```c
@@ -100,7 +135,7 @@ static const gauge_config_t s_oil_temp = {
     .caption         = "OIL TEMP",
     .unit            = "DEG C",
     .wordmark        = "R-GAUGE",
-    .tagline         = "PRECISION INSTRUMENT",
+    .tagline         = "TUNING SYSTEM",
     .min             = 40.0f,
     .max             = 160.0f,
     .major_step      = 20.0f,
@@ -113,6 +148,12 @@ static const gauge_config_t s_oil_temp = {
 ```
 
 Register it in `s_presets[]` and it appears in the `gauge` console command.
+`tools\test.ps1` will then pick it up automatically: the preset tests build a
+dial for every entry in the table and check the geometry is self-consistent.
+
+To see what it looks like before flashing, add the same preset to
+`tools/render_preview.py` and run it — a contract check fails if the two lists
+drift apart.
 
 ## Visual design
 
@@ -128,12 +169,16 @@ re-renders at any geometry:
 | Read-out and branding | `lv_label` |
 
 The palette deliberately evokes the classic 1990s Japanese instrument look, but
-the wordmark is our own — the default is `R-GAUGE`, change `--wordmark` in the
+the wordmark is our own — the default is `R-GAUGE`, change `.wordmark` in the
 presets if you want something else.
+
+`tools/render_preview.py` renders every preset on the host so the design can be
+reviewed without flashing — the results are the PNGs in `tools/preview/`.
 
 ## Roadmap
 
 - [x] Board bring-up, toolchain, gauge widget, RPM demo
+- [x] Test suites: host unit tests, contract checks, on-target LVGL tests
 - [ ] Real data: CAN / OBD-II / analogue inputs
 - [ ] Serial OTA so reflashing needs no buttons at all
 - [ ] Enable the 2 MB PSRAM and move draw buffers / assets into it

@@ -7,5 +7,5 @@ set(COMPONENT_SRCS
 idf_component_register(
     SRCS ${COMPONENT_SRCS}
     INCLUDE_DIRS "include"
-    REQUIRES bsp gauge lvgl esp_lcd nvs_flash esp_timer driver
+    REQUIRES bsp gauge lvgl esp_lcd nvs_flash esp_timer driver console
 )

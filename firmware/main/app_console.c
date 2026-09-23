@@ -17,7 +17,6 @@
 #include <string.h>
 
 #include "bsp.h"
-#include "esp_clk.h"
 #include "esp_console.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -160,8 +159,8 @@ static int cmd_version(int argc, char **argv)
     (void)argv;
     printf("round-1.28-gauge  |  ESP-IDF %s  |  LVGL %d.%d.%d\n",
            esp_get_idf_version(), LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
-    printf("Target: %s   Cores: %d   CPU: %d MHz\n",
-           CONFIG_IDF_TARGET, portNUM_PROCESSORS, esp_clk_cpu_freq() / 1000000);
+    printf("Target: %s   Cores: %d   CPU: %d MHz (configured)\n",
+           CONFIG_IDF_TARGET, portNUM_PROCESSORS, CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ);
     return 0;
 }
 
