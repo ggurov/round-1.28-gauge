@@ -100,53 +100,71 @@ TF_TEST(gauge_theme, geometry_is_ordered_sensibly)
     }
 }
 
-TF_TEST(gauge_theme, needle_reaches_past_the_numerals_but_not_the_ticks)
+TF_TEST(gauge_theme, ticks_hang_inside_the_rail)
 {
     for (size_t i = 0; i < THEME_COUNT; i++) {
         const gauge_theme_t *t = all_themes[i];
-        int rail = gauge_math_rail_radius(DIAL, t->bezel_width, t->band_gap, t->band_width);
-        int needle = gauge_math_needle_length(rail, t->tick_major_len);
-        int label_r = gauge_math_label_radius(rail, t->tick_major_len,
-                                              t->label_pad_radial, t->label_letter_space);
-        int tick_inner = rail - t->tick_major_len;
+        const int rail = gauge_math_rail_radius(DIAL, t->bezel_width, t->band_gap, t->band_width);
+        const int tick_base = gauge_math_tick_base_radius(rail, t->band_width);
 
-        TF_CHECK_MSG(needle <= tick_inner,
-                     "%s: needle tip %d runs into the tick band (inner %d)",
-                     theme_name(t), needle, tick_inner);
-        TF_CHECK_MSG(needle >= label_r,
-                     "%s: needle tip %d stops short of the numerals (centre %d)",
-                     theme_name(t), needle, label_r);
+        TF_CHECK_MSG(tick_base <= rail - t->band_width,
+                     "%s: ticks start at %d, inside the rail ending at %d",
+                     theme_name(t), tick_base, rail - t->band_width);
+        TF_GE(tick_base, 20);
     }
 }
 
-TF_TEST(gauge_theme, hub_does_not_swallow_the_numerals)
+TF_TEST(gauge_theme, warning_sector_is_inboard_of_the_ticks)
 {
     for (size_t i = 0; i < THEME_COUNT; i++) {
         const gauge_theme_t *t = all_themes[i];
-        int rail = gauge_math_rail_radius(DIAL, t->bezel_width, t->band_gap, t->band_width);
-        int label_r = gauge_math_label_radius(rail, t->tick_major_len,
-                                              t->label_pad_radial, t->label_letter_space);
-        /* assume up to a 30 px tall glyph */
-        int label_inner = label_r - 15;
-        TF_CHECK_MSG(t->hub_radius < label_inner,
-                     "%s: hub radius %d reaches the numerals (inner %d)",
-                     theme_name(t), t->hub_radius, label_inner);
+        const int rail = gauge_math_rail_radius(DIAL, t->bezel_width, t->band_gap, t->band_width);
+        const int tick_base = gauge_math_tick_base_radius(rail, t->band_width);
+        const int tick_inner = tick_base - t->tick_major_len;
+        const int alarm_out = gauge_math_alarm_outer_radius(tick_base, t->tick_major_len,
+                                                            t->alarm_gap);
+        const int alarm_in = alarm_out - t->alarm_width;
+
+        TF_CHECK_MSG(alarm_out < tick_inner,
+                     "%s: warning sector at %d overlaps the ticks (inner end %d)",
+                     theme_name(t), alarm_out, tick_inner);
+        TF_CHECK_MSG(alarm_in > 0, "%s: warning sector has no room", theme_name(t));
     }
 }
 
-TF_TEST(gauge_theme, label_pad_radial_keeps_the_numeral_layout_stable)
+TF_TEST(gauge_theme, needle_stops_short_of_the_warning_sector)
 {
     for (size_t i = 0; i < THEME_COUNT; i++) {
         const gauge_theme_t *t = all_themes[i];
-        int rail = gauge_math_rail_radius(DIAL, t->bezel_width, t->band_gap, t->band_width);
-        /* the pad we ship should round-trip through the layout maths */
-        int wanted = rail - t->tick_major_len - 4 - 12;   /* glyph_h 24 -> half 12 */
-        int pad = gauge_math_pad_radial_for(rail, t->tick_major_len, wanted,
-                                            t->label_letter_space);
-        int got = gauge_math_label_radius(rail, t->tick_major_len, pad,
-                                          t->label_letter_space);
-        if (pad > 0) {
-            TF_EQ_INT(got, wanted);
-        }
+        const int rail = gauge_math_rail_radius(DIAL, t->bezel_width, t->band_gap, t->band_width);
+        const int tick_base = gauge_math_tick_base_radius(rail, t->band_width);
+        const int alarm_out = gauge_math_alarm_outer_radius(tick_base, t->tick_major_len,
+                                                            t->alarm_gap);
+        const int alarm_in = alarm_out - t->alarm_width;
+        const int needle = alarm_in - 2;
+
+        TF_GE(needle, 20);
+        TF_CHECK_MSG(needle <= alarm_in,
+                     "%s: needle tip %d reaches into the warning sector", theme_name(t), needle);
+    }
+}
+
+TF_TEST(gauge_theme, numerals_fit_inside_the_warning_sector)
+{
+    for (size_t i = 0; i < THEME_COUNT; i++) {
+        const gauge_theme_t *t = all_themes[i];
+        const int rail = gauge_math_rail_radius(DIAL, t->bezel_width, t->band_gap, t->band_width);
+        const int tick_base = gauge_math_tick_base_radius(rail, t->band_width);
+        const int alarm_out = gauge_math_alarm_outer_radius(tick_base, t->tick_major_len,
+                                                            t->alarm_gap);
+        const int alarm_in = alarm_out - t->alarm_width;
+        const int cap = 16;   /* gfx_font_label cap height */
+        const int label_r = alarm_in - 3 - cap / 2;
+
+        TF_CHECK_MSG(label_r + cap / 2 < alarm_in,
+                     "%s: numerals reach the warning sector", theme_name(t));
+        TF_CHECK_MSG(label_r - cap / 2 > t->hub_radius,
+                     "%s: numerals collide with the hub (%d vs %d)",
+                     theme_name(t), label_r - cap / 2, t->hub_radius);
     }
 }

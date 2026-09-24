@@ -63,18 +63,30 @@ if (-not $SkipHost) {
         $sources = @(
             'tests\host\test_main.c'
             'tests\host\test_framework.c'
+            'tests\host\stub_bsp.c'
             'tests\host\test_gauge_math.c'
             'tests\host\test_gauge_theme.c'
             'tests\host\test_gauge_presets.c'
+            'tests\host\test_gfx.c'
+            'tests\host\test_gauge_render.c'
             'firmware\components\gauge\gauge_math.c'
             'firmware\components\gauge\gauge_theme.c'
             'firmware\components\gauge\gauge_presets.c'
+            'firmware\components\gauge\gauge_render.c'
+            'firmware\components\gfx\gfx.c'
+            'firmware\components\gfx\gfx_text.c'
+            'firmware\components\gfx\gfx_font_data.c'
         ) | ForEach-Object { Join-Path $repoRoot $_ }
 
+        # esp_stub first: it satisfies bsp.h's esp_err.h / esp_lcd_types.h so
+        # gfx and the renderer can be built without ESP-IDF
         $args = @(
             '-std=gnu17', '-Wall', '-Wextra', '-Werror', '-Wno-unused-parameter',
             '-O1', '-g',
+            '-Itests/host/esp_stub',
             '-Ifirmware/components/gauge/include',
+            '-Ifirmware/components/gfx/include',
+            '-Ifirmware/components/bsp/include',
             '-Itests/host'
         ) + $sources + @('-o', $exe, '-lm')
 

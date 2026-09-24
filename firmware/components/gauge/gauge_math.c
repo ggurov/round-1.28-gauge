@@ -114,6 +114,16 @@ int gauge_math_needle_length(int rail_radius, int major_len)
     return rail_radius - major_len - 2;
 }
 
+int gauge_math_tick_base_radius(int rail_radius, int band_width)
+{
+    return rail_radius - band_width;
+}
+
+int gauge_math_alarm_outer_radius(int tick_base_radius, int major_len, int alarm_gap)
+{
+    return tick_base_radius - major_len - alarm_gap;
+}
+
 void gauge_math_from_config(const gauge_config_t *cfg, gauge_scale_t *out)
 {
     out->min = cfg->min;

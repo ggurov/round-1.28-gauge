@@ -51,6 +51,7 @@ typedef struct {
     uint32_t unit;            /* "x1000 r/min"                           */
     uint32_t wordmark;
     uint32_t tagline;
+    uint32_t status;          /* small print under the read-out          */
 
     /* Typography */
     gauge_font_t font_label;
@@ -63,9 +64,12 @@ typedef struct {
     /* Tick / band geometry, in pixels at 240x240 */
     int band_gap;             /* black gap between bezel and the rail     */
     int band_width;           /* rail thickness                           */
+    int alarm_gap;            /* gap between the rail and the alarm arc   */
+    int alarm_width;          /* alarm arc thickness                      */
+    int tick_gap;             /* gap between the alarm arc and the ticks  */
     int tick_major_len;
     int tick_minor_len;
-    int tick_major_width;
+    int tick_major_width;     /* half-width of the major tick wedge       */
     int tick_minor_width;
     int bezel_width;
     int hub_radius;

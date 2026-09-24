@@ -11,11 +11,13 @@
 #include "app_gauge.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "bsp.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "gauge_render.h"
@@ -23,7 +25,7 @@
 
 static const char *TAG = "gauge";
 
-#define TICK_MS 20
+#define MIN_FRAME_MS 2   /* shortest frame period the loop will run at */
 
 /* Self-test sweep timings (ms from start). */
 #define SELFTEST_TOP_MS 1150
@@ -58,6 +60,11 @@ static float    s_jitter;
 static bool     s_selftest;
 static float    s_manual;
 
+/* delivered frame rate, smoothed */
+static int64_t  s_last_frame_us;
+static float    s_fps;
+static bool     s_show_stats = true;
+
 /* -------------------------------------------------------------------------- */
 
 static void restart_selftest(void)
@@ -71,10 +78,26 @@ static void restart_selftest(void)
 static void gauge_task(void *arg)
 {
     (void)arg;
-    const TickType_t period = pdMS_TO_TICKS(TICK_MS);
+    int64_t last_us = esp_timer_get_time();
 
     for (;;) {
-        vTaskDelay(period);
+        /*
+         * Yield briefly rather than sleeping a fixed frame time.  The frame
+         * period is whatever the render plus the SPI transfer costs, so the
+         * panel sets the frame rate and this delay only has to be short enough
+         * not to be the bottleneck.  Sleeping a fixed 20 ms here cost about
+         * half the available frame budget.
+         */
+        vTaskDelay(pdMS_TO_TICKS(MIN_FRAME_MS));
+
+        const int64_t now = esp_timer_get_time();
+        const float dt = (float)(now - last_us) / 1000000.0f;
+        if (dt < (float)MIN_FRAME_MS / 1000.0f) {
+            continue;
+        }
+        last_us = now;
+        const uint32_t dt_ms = (uint32_t)(dt * 1000.0f);
+
         if (!s_gauge || !s_visible) {
             continue;
         }
@@ -84,7 +107,7 @@ static void gauge_task(void *arg)
         if (!s_demo) {
             gauge_render_set_value(s_gauge, s_manual);
         } else if (s_selftest) {
-            s_elapsed_ms += TICK_MS;
+            s_elapsed_ms += dt_ms;
             if (s_elapsed_ms < 500) {
                 gauge_render_set_value(s_gauge, cfg->min);
             } else if (s_elapsed_ms < SELFTEST_TOP_MS) {
@@ -97,7 +120,7 @@ static void gauge_task(void *arg)
                 s_step_ms = 0;
             }
         } else {
-            s_step_ms += TICK_MS;
+            s_step_ms += dt_ms;
             if (s_step_ms >= k_script[s_step].ms) {
                 s_step_ms = 0;
                 s_step = (s_step + 1) % SCRIPT_LEN;
@@ -113,8 +136,29 @@ static void gauge_task(void *arg)
             gauge_render_set_value(s_gauge, value);
         }
 
-        gauge_render_tick(s_gauge, (float)TICK_MS / 1000.0f);
+        gauge_render_tick(s_gauge, dt);
         gfx_flush();
+
+        /*
+         * Frame rate is measured from the interval between completed frames,
+         * so it includes the render and the SPI transfer - it is what the
+         * panel actually gets, not what the renderer alone could do.
+         */
+        const int64_t done = esp_timer_get_time();
+        if (s_last_frame_us) {
+            const int64_t delta = done - s_last_frame_us;
+            if (delta > 0) {
+                const float instant = 1000000.0f / (float)delta;
+                s_fps = (s_fps <= 0.0f) ? instant : (s_fps + (instant - s_fps) * 0.15f);
+            }
+        }
+        s_last_frame_us = done;
+
+        if (s_show_stats) {
+            char buf[24];
+            snprintf(buf, sizeof(buf), "%.1f fps", (double)s_fps);
+            gauge_render_set_status(s_gauge, buf);
+        }
     }
 }
 
@@ -200,4 +244,22 @@ void app_gauge_sweep(void)
 {
     s_demo = true;
     restart_selftest();
+}
+
+float app_gauge_fps(void)
+{
+    return s_fps;
+}
+
+void app_gauge_show_stats(bool on)
+{
+    s_show_stats = on;
+    if (!on && s_gauge) {
+        gauge_render_set_status(s_gauge, NULL);
+    }
+}
+
+bool app_gauge_stats_shown(void)
+{
+    return s_show_stats;
 }

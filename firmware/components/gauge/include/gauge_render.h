@@ -39,6 +39,33 @@ void gauge_render_draw(gauge_render_t *g);
 /* True while the needle is still moving. */
 bool gauge_render_moving(const gauge_render_t *g);
 
+/*
+ * A small line of text under the read-out, in the theme's dim status colour -
+ * used for the delivered frame rate.  NULL or "" hides it.
+ */
+void gauge_render_set_status(gauge_render_t *g, const char *text);
+
+/*
+ * The radii the renderer actually resolved, in pixels from the dial centre.
+ * Exposed so tests and diagnostics can check the real layout instead of
+ * re-deriving it and drifting out of step.
+ */
+typedef struct {
+    int dial_radius;    /* outer edge of the bezel   */
+    int r_rail;         /* outer edge of the band    */
+    int r_band_in;
+    int r_tick_base;    /* ticks hang inwards from here */
+    int r_alarm_out;    /* warning sector            */
+    int r_alarm_in;
+    int tick_major_len;
+    int tick_minor_len;
+    int needle_len;
+    int label_radius;   /* centre of the numerals    */
+    int hub_radius;
+} gauge_geometry_t;
+
+void gauge_render_geometry(const gauge_render_t *g, gauge_geometry_t *out);
+
 #ifdef __cplusplus
 }
 #endif

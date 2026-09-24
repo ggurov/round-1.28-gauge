@@ -162,6 +162,24 @@ static int cmd_value(int argc, char **argv)
     return 0;
 }
 
+static int cmd_fps(int argc, char **argv)
+{
+    if (argc >= 2) {
+        if (strcmp(argv[1], "on") == 0) {
+            app_gauge_show_stats(true);
+        } else if (strcmp(argv[1], "off") == 0) {
+            app_gauge_show_stats(false);
+        } else {
+            printf("usage: fps [on|off]\n");
+            return 1;
+        }
+    }
+    printf("delivered frame rate: %.1f fps  (readout %s)\n",
+           (double)app_gauge_fps(),
+           app_gauge_stats_shown() ? "shown" : "hidden");
+    return 0;
+}
+
 static int cmd_free(int argc, char **argv)
 {
     (void)argc;
@@ -216,6 +234,7 @@ esp_err_t app_console_start(void)
         { .command = "gauge", .help = "List or select a gauge: gauge [id]", .func = &cmd_gauge },
         { .command = "demo", .help = "Simulator: demo [on|off|sweep]", .func = &cmd_demo },
         { .command = "value", .help = "Drive the needle: value <number>", .func = &cmd_value },
+        { .command = "fps", .help = "Frame rate: fps [on|off]", .func = &cmd_fps },
         { .command = "backlight", .help = "Backlight: backlight [0-100]", .func = &cmd_backlight },
         { .command = "flush", .help = "Show panel transfer statistics", .func = &cmd_flush },
         { .command = "free", .help = "Show heap usage", .func = &cmd_free },

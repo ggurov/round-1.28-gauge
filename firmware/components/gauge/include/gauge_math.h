@@ -82,6 +82,20 @@ int gauge_math_pad_radial_for(int rail_radius, int major_len, int wanted_radius,
 int gauge_math_needle_length(int rail_radius, int major_len);
 
 /*
+ * Radius the ticks start at: the inner edge of the rail.  The ticks do not
+ * overlap the rail - on a GReddy dial the green band is a clean ring with the
+ * ticks hanging inside it.
+ */
+int gauge_math_tick_base_radius(int rail_radius, int band_width);
+
+/*
+ * Outer edge of the warning sector.  It is a separate arc set inboard of the
+ * ticks rather than a recolour of them, which is how the old GReddy dials did
+ * it: the red zone sits between the scale and the numerals.
+ */
+int gauge_math_alarm_outer_radius(int tick_base_radius, int major_len, int alarm_gap);
+
+/*
  * Builds the arithmetic view of a config, applying the documented defaults
  * (angle_range 0 -> 270, rotation 0 -> 135, minor_per_major 0 -> 4).
  */

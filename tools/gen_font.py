@@ -61,6 +61,7 @@ def rasterise(path: str, size: int):
 
     glyphs = []
     blob = bytearray()
+    cap_height = 0
 
     for ch in CHARSET:
         # generous box, then crop to the ink
@@ -76,14 +77,25 @@ def rasterise(path: str, size: int):
         crop = img.crop(bbox)
         w, h = crop.size
         bearing_x = bbox[0] - size             # offset from the pen origin
-        bearing_y = bbox[1] - size             # from the ascent line
+        # The ink top relative to the BASELINE.  PIL places the text origin on
+        # the ascender line, which sits `ascent` above the baseline, so the
+        # ascent has to come off again - without that every glyph is drawn one
+        # ascent too low and its lower half lands outside whatever background
+        # was cleared for it.
+        bearing_y = bbox[1] - size - ascent
         advance = int(round(font.getlength(ch)))
+
+        # The cap height is what text should be vertically centred on: the ink
+        # height of a digit, not the line box or the ascent, both of which
+        # include room the glyphs never use.
+        if ch == "0":
+            cap_height = h
 
         offset = len(blob)
         blob += crop.tobytes()
         glyphs.append((w, h, bearing_x, advance, offset, bearing_y))
 
-    return line_height, ascent, glyphs, blob
+    return line_height, ascent, cap_height, glyphs, blob
 
 
 def main() -> int:
@@ -94,11 +106,11 @@ def main() -> int:
     header_glyphs = []
 
     for name, size, _bold in FONTS:
-        line_height, ascent, glyphs, blob = rasterise(path, size)
+        line_height, ascent, cap_height, glyphs, blob = rasterise(path, size)
         total_alpha = sum(g[0] * g[1] for g in glyphs)
         print(f"  {name:<18} {size:>3}px  {len(glyphs)} glyphs, "
               f"{len(blob)} alpha bytes")
-        parts.append((name, size, line_height, ascent, glyphs, blob))
+        parts.append((name, size, line_height, ascent, cap_height, glyphs, blob))
         header_glyphs.append(name)
 
     # ---- write the .c ------------------------------------------------------
@@ -112,8 +124,9 @@ def main() -> int:
                 " */\n"
                 '#include "gfx_font_data.h"\n\n')
 
-        for name, size, line_height, ascent, glyphs, blob in parts:
-            f.write(f"/* {name}: {size}px, line height {line_height}, ascent {ascent} */\n")
+        for name, size, line_height, ascent, cap_height, glyphs, blob in parts:
+            f.write(f"/* {name}: {size}px, line height {line_height}, ascent {ascent}, "
+                    f"cap height {cap_height} */\n")
             f.write(f"static const uint8_t {name}_alpha[] = {{\n")
             for i in range(0, len(blob), 20):
                 f.write("    " + ",".join(f"0x{b:02X}" for b in blob[i:i + 20]) + ",\n")
@@ -126,7 +139,8 @@ def main() -> int:
 
             f.write(f"const gfx_font_t {name} = {{\n")
             f.write(f"    .first = 0x{ord(CHARSET[0]):02X}, .count = {len(CHARSET)},\n")
-            f.write(f"    .line_height = {line_height}, .ascent = {ascent},\n")
+            f.write(f"    .line_height = {line_height}, .ascent = {ascent}, "
+                    f".cap_height = {cap_height},\n")
             f.write(f"    .glyphs = {name}_glyphs,\n")
             f.write(f"    .alpha = {name}_alpha,\n")
             f.write("};\n\n")

@@ -28,6 +28,13 @@ void app_gauge_set_value(float value);
 /* Replay the full-scale self-test sweep. */
 void app_gauge_sweep(void);
 
+/* Delivered frame rate, smoothed, in frames per second. */
+float app_gauge_fps(void);
+
+/* Show/hide the frame-rate line under the read-out. */
+void app_gauge_show_stats(bool on);
+bool app_gauge_stats_shown(void);
+
 /* Stop drawing the gauge (so test screens can own the display). */
 void app_gauge_stop(void);
 

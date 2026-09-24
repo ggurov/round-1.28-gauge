@@ -9,6 +9,7 @@
 
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "gauge_math.h"
@@ -25,9 +26,12 @@ struct gauge_render {
     gauge_scale_t  scale;
 
     /* resolved geometry */
-    int r_rail;        /* tick base radius */
+    int r_rail;        /* outer edge of the rail */
     int r_band_out;
     int r_band_in;
+    int r_tick_base;   /* where the ticks hang from */
+    int r_alarm_out;   /* warning sector, inboard of the ticks */
+    int r_alarm_in;
     int needle_len;
     int label_radius;
     int pad_radial;
@@ -42,6 +46,7 @@ struct gauge_render {
     float max_step;
     float epsilon;
     char  value_text[GAUGE_LABEL_LEN];
+    char  status_text[24];
 
     /* label storage for lv_scale-style auto numerals */
     char label_buf[GAUGE_MAX_TICKS][GAUGE_LABEL_LEN];
@@ -65,11 +70,7 @@ static void polar(float cx, float cy, float r, float deg, int *x, int *y)
     *y = (int)lroundf(cy + r * sinf(rad));
 }
 
-static uint16_t font_line(const gfx_font_t *f)
-{
-    return (uint16_t)f->line_height;
-}
-
+/* Text is placed on cap height (see gfx_text.h), so line_height is not used. */
 /* -------------------------------------------------------------------------- */
 /* drawing                                                                    */
 /* -------------------------------------------------------------------------- */
@@ -80,16 +81,18 @@ static void draw_band(gauge_render_t *g)
     const int a0 = (int)scale_angle(g, g->cfg.min);
     const int a1 = (int)scale_angle(g, g->cfg.max);
 
-    /* glow: a wider, dimmer band just outside and inside the rail */
+    /* glow: a wider, dimmer band behind the rail */
     const uint16_t glow = gfx_blend(gfx_hex(th->face), gfx_hex(th->band_glow), 90);
     gfx_arc_band(CX, CY, g->r_band_out + th->band_width, g->r_band_in - th->band_width,
                  a0, a1, glow);
 
+    /* The rail runs the whole sweep, uninterrupted.  The warning sector is a
+     * separate arc further in - it never paints over the rail or the ticks. */
     gfx_arc_band(CX, CY, g->r_band_out, g->r_band_in, a0, a1, gfx_hex(th->band));
 
     if (g->cfg.alarm_from <= g->cfg.max) {
         const int aa0 = (int)scale_angle(g, g->cfg.alarm_from);
-        gfx_arc_band(CX, CY, g->r_band_out, g->r_band_in, aa0, a1, gfx_hex(th->alarm));
+        gfx_arc_band(CX, CY, g->r_alarm_out, g->r_alarm_in, aa0, a1, gfx_hex(th->alarm));
     }
 }
 
@@ -98,30 +101,41 @@ static void draw_ticks(gauge_render_t *g)
     const gauge_theme_t *th = g->cfg.theme;
     const int ticks = gauge_math_total_ticks(&g->scale);
     const int minor = g->cfg.minor_per_major;
-    const float alarm_angle = (g->cfg.alarm_from <= g->cfg.max)
-                                  ? scale_angle(g, g->cfg.alarm_from)
-                                  : 1e9f;
 
     for (int i = 0; i < ticks; i++) {
         const float frac = (ticks > 1) ? (float)i / (float)(ticks - 1) : 0.0f;
         const float deg = (float)g->cfg.rotation + frac * (float)g->cfg.angle_range;
         const bool major = (minor > 0) && (i % minor == 0);
-        const int len = major ? g->tick_major_len : g->tick_minor_len;
-        const int width = major ? th->tick_major_width : th->tick_minor_width;
-        uint16_t colour = major ? gfx_hex(th->tick_major) : gfx_hex(th->tick_minor);
+        const uint16_t colour = major ? gfx_hex(th->tick_major) : gfx_hex(th->tick_minor);
 
-        if (major && deg >= alarm_angle) {
-            colour = gfx_hex(th->alarm);
-        }
-
-        int x0, y0, x1, y1;
-        polar((float)CX, (float)CY, (float)g->r_rail, deg, &x0, &y0);
-        polar((float)CX, (float)CY, (float)(g->r_rail - len), deg, &x1, &y1);
-        if (width <= 1) {
+        if (!major) {
+            int x0, y0, x1, y1;
+            polar((float)CX, (float)CY, (float)g->r_tick_base, deg, &x0, &y0);
+            polar((float)CX, (float)CY, (float)(g->r_tick_base - g->tick_minor_len), deg, &x1, &y1);
             gfx_line(x0, y0, x1, y1, colour);
-        } else {
-            gfx_thick_line(x0, y0, x1, y1, width, colour);
+            continue;
         }
+
+        /*
+         * Major ticks are wedges with the flat edge on the rail and the point
+         * towards the centre, like the old GReddy dials, rather than plain
+         * bars.
+         */
+        const float rad = deg * (float)M_PI / 180.0f;
+        const float ux = cosf(rad), uy = sinf(rad);   /* outward */
+        const float vx = -uy, vy = ux;                /* across   */
+        const float w = (float)th->tick_major_width;
+        const float r_base = (float)g->r_tick_base;
+        const float r_tip = r_base - (float)g->tick_major_len;
+
+        int px[3], py[3];
+        px[0] = CX + (int)lroundf(r_base * ux + w * vx);
+        py[0] = CY + (int)lroundf(r_base * uy + w * vy);
+        px[1] = CX + (int)lroundf(r_base * ux - w * vx);
+        py[1] = CY + (int)lroundf(r_base * uy - w * vy);
+        px[2] = CX + (int)lroundf(r_tip * ux);
+        py[2] = CY + (int)lroundf(r_tip * uy);
+        gfx_fill_polygon(px, py, 3, colour);
     }
 }
 
@@ -147,11 +161,12 @@ static void draw_numerals(gauge_render_t *g)
         polar((float)CX, (float)CY, (float)g->label_radius, deg, &x, &y);
 
         const int w = gfx_text_width(g->label_buf[i], &gfx_font_label);
-        const int h = (int)font_line(&gfx_font_label);
+        const int cap = (int)gfx_font_label.cap_height;
         /* Punch a hole in the face first: without it the numeral overlaps the
-         * ticks and the band on a busy dial. */
-        gfx_fill_rect(x - w / 2 - 1, y - h / 2, x + w / 2 + 1, y + h / 2, face);
-        gfx_text_centered(x, y - h / 2, g->label_buf[i], &gfx_font_label, colour);
+         * ticks and the band on a busy dial.  The hole is sized to the cap
+         * band, which is where the ink actually lands. */
+        gfx_fill_rect(x - w / 2 - 1, y - cap / 2 - 1, x + w / 2 + 1, y + cap / 2 + 1, face);
+        gfx_text_cap_centered(x, y, g->label_buf[i], &gfx_font_label, colour);
     }
 }
 
@@ -212,32 +227,36 @@ static void draw_text(gauge_render_t *g)
      * +36 the value box still clears the numerals; at +60 it did not and the
      * read-out ran into the "8" and the tick band.
      */
-    const int y_word = CY - (hub + 26);
-    const int y_tag = CY - (hub + 10);
+    /* Branding sits just above the hub.  With no tagline the wordmark drops
+     * closer to it; if a preset brings a tagline back, the wordmark makes room. */
+    const int y_tag = CY - (hub + 8);
+    const int y_word = y_tag - (c->tagline ? 15 : 8);
     const int y_cap = CY + (hub + 14);
     const int y_val = CY + (hub + 36);
     const int y_unit = CY + (hub + 58);
+    /* the status line takes the slot the unit used to occupy, unless a preset
+     * still ships a unit line, in which case it goes underneath */
+    const int y_status = y_unit + (c->unit ? 20 : 0);
 
     if (c->wordmark) {
-        gfx_text_centered(CX, y_word - gfx_font_small.line_height / 2, c->wordmark,
-                          &gfx_font_small, gfx_hex(th->wordmark));
+        gfx_text_cap_centered(CX, y_word, c->wordmark, &gfx_font_small, gfx_hex(th->wordmark));
     }
     if (c->tagline) {
-        gfx_text_centered(CX, y_tag - gfx_font_small.line_height / 2, c->tagline,
-                          &gfx_font_small, gfx_hex(th->tagline));
+        gfx_text_cap_centered(CX, y_tag, c->tagline, &gfx_font_small, gfx_hex(th->tagline));
     }
     if (c->caption) {
-        gfx_text_centered(CX, y_cap - gfx_font_small.line_height / 2, c->caption,
-                          &gfx_font_small, gfx_hex(th->caption));
+        gfx_text_cap_centered(CX, y_cap, c->caption, &gfx_font_small, gfx_hex(th->caption));
     }
 
     gauge_math_format(&g->scale, g->displayed, g->value_text, sizeof(g->value_text));
-    gfx_text_centered(CX, y_val - gfx_font_value.line_height / 2, g->value_text,
-                      &gfx_font_value, gfx_hex(th->value));
+    gfx_text_cap_centered(CX, y_val, g->value_text, &gfx_font_value, gfx_hex(th->value));
 
     if (c->unit) {
-        gfx_text_centered(CX, y_unit - gfx_font_small.line_height / 2, c->unit,
-                          &gfx_font_small, gfx_hex(th->unit));
+        gfx_text_cap_centered(CX, y_unit, c->unit, &gfx_font_small, gfx_hex(th->unit));
+    }
+    if (g->status_text[0]) {
+        gfx_text_cap_centered(CX, y_status, g->status_text, &gfx_font_small,
+                              gfx_hex(th->status));
     }
 }
 
@@ -305,15 +324,21 @@ gauge_render_t *gauge_render_create(const gauge_config_t *cfg)
     g->r_rail = gauge_math_rail_radius(GFX_W, th->bezel_width, th->band_gap, th->band_width);
     g->r_band_out = g->r_rail;
     g->r_band_in = g->r_rail - th->band_width;
+    g->r_tick_base = gauge_math_tick_base_radius(g->r_rail, th->band_width);
+    g->r_alarm_out = gauge_math_alarm_outer_radius(g->r_tick_base, g->tick_major_len,
+                                                   th->alarm_gap);
+    g->r_alarm_in = g->r_alarm_out - th->alarm_width;
 
+    /* the needle stops just short of the warning sector, and the numerals sit
+     * inside it */
     g->needle_len = (cfg->needle_length > 0.0f)
                         ? (int)lroundf(cfg->needle_length)
-                        : gauge_math_needle_length(g->r_rail, g->tick_major_len);
+                        : (g->r_alarm_in - 2);
 
-    const int glyph_h = gfx_font_label.line_height;
+    const int glyph_h = gfx_font_label.cap_height;
     g->label_radius = (cfg->label_radius > 0.0f)
                           ? (int)lroundf(cfg->label_radius)
-                          : (g->r_rail - g->tick_major_len - 4 - glyph_h / 2);
+                          : (g->r_alarm_in - 3 - glyph_h / 2);
     g->pad_radial = gauge_math_pad_radial_for(g->r_rail, g->tick_major_len,
                                               g->label_radius, th->label_letter_space);
     (void)g->pad_radial;
@@ -365,4 +390,35 @@ float gauge_render_target(const gauge_render_t *g)
 const gauge_config_t *gauge_render_config(const gauge_render_t *g)
 {
     return g ? &g->cfg : NULL;
+}
+
+void gauge_render_set_status(gauge_render_t *g, const char *text)
+{
+    if (!g) {
+        return;
+    }
+    if (!text) {
+        g->status_text[0] = '\0';
+        return;
+    }
+    strncpy(g->status_text, text, sizeof(g->status_text) - 1);
+    g->status_text[sizeof(g->status_text) - 1] = '\0';
+}
+
+void gauge_render_geometry(const gauge_render_t *g, gauge_geometry_t *out)
+{
+    if (!g || !out) {
+        return;
+    }
+    out->dial_radius = GFX_W / 2;
+    out->r_rail = g->r_rail;
+    out->r_band_in = g->r_band_in;
+    out->r_tick_base = g->r_tick_base;
+    out->r_alarm_out = g->r_alarm_out;
+    out->r_alarm_in = g->r_alarm_in;
+    out->tick_major_len = g->tick_major_len;
+    out->tick_minor_len = g->tick_minor_len;
+    out->needle_len = g->needle_len;
+    out->label_radius = g->label_radius;
+    out->hub_radius = g->hub_radius;
 }
