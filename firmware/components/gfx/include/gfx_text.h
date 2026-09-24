@@ -3,6 +3,12 @@
  *
  * The fonts are generated from a system TTF by tools/gen_font.py into 8-bit
  * coverage masks.  No font library runs on the device.
+ *
+ * Coordinates are baselines, not box tops.  A glyph's ink sits between the
+ * baseline and roughly `cap_height` above it, and the ascent includes room that
+ * digits and capitals never use - so centring on the line height puts text
+ * visibly low.  Use gfx_text_cap_centered() when you want text to look
+ * centred.
  */
 #pragma once
 
@@ -24,10 +30,11 @@ typedef struct {
 } gfx_glyph_t;
 
 typedef struct {
-    uint8_t  first;      /* first character code covered */
-    uint8_t  count;      /* number of glyphs */
+    uint8_t  first;       /* first character code covered */
+    uint8_t  count;       /* number of glyphs */
     uint8_t  line_height;
     uint8_t  ascent;
+    uint8_t  cap_height;  /* ink height of a digit; use this to centre text */
     const gfx_glyph_t *glyphs;
     const uint8_t *alpha;
 } gfx_font_t;
@@ -35,16 +42,25 @@ typedef struct {
 /* Width in pixels of `text` rendered with `font`. */
 int gfx_text_width(const char *text, const gfx_font_t *font);
 
-/* Draw with the top-left of the text box at (x, y). */
-void gfx_text(int x, int y, const char *text, const gfx_font_t *font, uint16_t colour);
+/* Draw with the baseline at `baseline_y` and the pen at `x`. */
+void gfx_text(int x, int baseline_y, const char *text, const gfx_font_t *font,
+              uint16_t colour);
 
-/* Draw with the horizontal centre at `cx`. */
-void gfx_text_centered(int cx, int y, const char *text, const gfx_font_t *font,
+/* Horizontally centred on `cx`, baseline at `baseline_y`. */
+void gfx_text_centered(int cx, int baseline_y, const char *text, const gfx_font_t *font,
                        uint16_t colour);
 
-/* Draw right-aligned to `x_right`. */
-void gfx_text_right(int x_right, int y, const char *text, const gfx_font_t *font,
+/* Right-aligned to `x_right`, baseline at `baseline_y`. */
+void gfx_text_right(int x_right, int baseline_y, const char *text, const gfx_font_t *font,
                     uint16_t colour);
+
+/*
+ * Centred both ways on (cx, cy) using the cap height, so every string in a row
+ * sits on the same visual line regardless of which letters it happens to
+ * contain.
+ */
+void gfx_text_cap_centered(int cx, int cy, const char *text, const gfx_font_t *font,
+                           uint16_t colour);
 
 #ifdef __cplusplus
 }

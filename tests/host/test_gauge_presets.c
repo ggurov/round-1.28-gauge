@@ -200,42 +200,37 @@ TF_TEST(gauge_presets, alarm_band_is_wide_enough_to_see)
     }
 }
 
-TF_TEST(gauge_presets, every_preset_renders_a_sane_dial)
+/*
+ * The dial's radial layout is checked against the renderer's own resolved
+ * geometry in test_gauge_render.c.  Here we only check what the config alone
+ * can tell us.
+ */
+TF_TEST(gauge_presets, every_preset_has_a_usable_dial)
 {
     for (const gauge_preset_t *p = gauge_presets_all(); p->id; p++) {
         const gauge_config_t *c = p->cfg;
         const gauge_theme_t *t = c->theme;
-        int dial = 240;
+        const int dial = 240;
 
         gauge_scale_t s;
         gauge_math_from_config(c, &s);
+        const int majors = gauge_math_major_ticks(&s);
+        const int ticks = gauge_math_total_ticks(&s);
 
-        int rail = gauge_math_rail_radius(dial, t->bezel_width, t->band_gap, t->band_width);
-        int needle = gauge_math_needle_length(rail, t->tick_major_len);
-        int label_r = gauge_math_label_radius(rail, t->tick_major_len,
-                                              t->label_pad_radial, t->label_letter_space);
-        int majors = gauge_math_major_ticks(&s);
+        const int rail = gauge_math_rail_radius(dial, t->bezel_width, t->band_gap,
+                                                t->band_width);
+        const int tick_base = gauge_math_tick_base_radius(rail, t->band_width);
+        const int alarm_out = gauge_math_alarm_outer_radius(tick_base, t->tick_major_len,
+                                                            t->alarm_gap);
+        const int alarm_in = alarm_out - t->alarm_width;
 
-        char msg[160];
-        snprintf(msg, sizeof(msg), "%s: ", p->id);
-
-        TF_CHECK_MSG(rail > 0 && rail < dial / 2, "%srail %d out of range", msg, rail);
-        TF_CHECK_MSG(needle > 0, "%sneedle length %d", msg, needle);
-        TF_CHECK_MSG(label_r > t->hub_radius + 12,
-                     "%snumeral radius %d collides with the hub (%d)",
-                     msg, label_r, t->hub_radius);
-        TF_CHECK_MSG(label_r < needle,
-                     "%snumerals (%d) sit outside the needle tip (%d)",
-                     msg, label_r, needle);
-
-        /* the value read-out must fit across the bottom wedge */
-        int value_halfwidth = 40;   /* four digits at the value font */
-        int value_y = t->hub_radius + 42;
-        TF_CHECK_MSG(value_y + 18 < rail - t->tick_major_len,
-                     "%svalue read-out collides with the tick band", msg);
-        TF_CHECK_MSG(value_halfwidth < needle, "%svalue read-out too wide", msg);
-
+        TF_CHECK_MSG(rail > 0 && rail < dial / 2, "%s: rail %d out of range", p->id, rail);
+        TF_CHECK_MSG(tick_base > dial / 4, "%s: tick base %d too deep", p->id, tick_base);
+        TF_CHECK_MSG(alarm_in > t->hub_radius + 20,
+                     "%s: warning sector inner edge %d leaves no room for numerals",
+                     p->id, alarm_in);
         TF_GE(majors, 2);
+        TF_GE(ticks, majors);
     }
 }
 

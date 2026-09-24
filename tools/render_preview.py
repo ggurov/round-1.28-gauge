@@ -30,16 +30,18 @@ DIAL = 240                  # panel is 240x240
 BEZEL_W = 4
 BAND_GAP = 3
 BAND_W = 5
-TICK_MAJOR_LEN = 16
-TICK_MINOR_LEN = 8
-TICK_MAJOR_W = 3
+ALARM_GAP = 1
+ALARM_W = 4
+TICK_MAJOR_LEN = 15
+TICK_MINOR_LEN = 7
+TICK_MAJOR_W = 4          # half-width of the major tick wedge
 TICK_MINOR_W = 1
 LABEL_PAD_RADIAL = 3
 LABEL_ROTATE = 0            # numerals stay upright
 
 HUB_R = 18
-Y_WORDMARK = -(HUB_R + 26)
-Y_TAGLINE = -(HUB_R + 10)
+Y_TAGLINE = -(HUB_R + 8)
+Y_WORDMARK = -(HUB_R + 16)
 Y_CAPTION = HUB_R + 14
 Y_VALUE = HUB_R + 36
 Y_UNIT = HUB_R + 58
@@ -54,8 +56,8 @@ LV_SCALE_DEFAULT_LABEL_GAP = 15
 
 RAIL_R = DIAL // 2 - (BEZEL_W + BAND_GAP + BAND_W // 2)
 SCALE_D = 2 * RAIL_R
-LABEL_R = RAIL_R - TICK_MAJOR_LEN - LV_SCALE_DEFAULT_LABEL_GAP - LABEL_PAD_RADIAL
-NEEDLE_LEN = RAIL_R - TICK_MAJOR_LEN - 2
+LABEL_R = RAIL_R - BAND_W - TICK_MAJOR_LEN - ALARM_GAP - ALARM_W - 3 - 8
+NEEDLE_LEN = RAIL_R - BAND_W - TICK_MAJOR_LEN - ALARM_GAP - ALARM_W - 2
 
 # ---- palettes, mirrors gauge_theme.c -------------------------------------
 GREDDY = dict(
@@ -80,18 +82,18 @@ AMBER = dict(
 
 # ---- presets, mirrors gauge_presets.c ------------------------------------
 PRESETS = [
-    dict(id="rpm", caption="RPM", unit="", wordmark="R-GAUGE",
-         tagline="TUNING SYSTEM", lo=0, hi=8000, major=1000, minor=4,
+    dict(id="rpm", caption="RPM", unit="", wordmark="epicEFI",
+ lo=0, hi=8000, major=1000, minor=4,
          alarm=6500, decimals=0, theme=GREDDY, show=4200,
          labels=["0", "1", "2", "3", "4", "5", "6", "7", "8"]),
-    dict(id="temp", caption="CL TEMP", unit="", wordmark="R-GAUGE",
-         tagline="TUNING SYSTEM", lo=50, hi=150, major=10, minor=2,
+    dict(id="temp", caption="CL TEMP", unit="", wordmark="epicEFI",
+ lo=50, hi=150, major=10, minor=2,
          alarm=115, decimals=0, theme=GREDDY, show=92),
-    dict(id="boost", caption="BOOST", unit="", wordmark="R-GAUGE",
-         tagline="TUNING SYSTEM", lo=-1.0, hi=2.0, major=0.5, minor=5,
+    dict(id="boost", caption="BOOST", unit="", wordmark="epicEFI",
+ lo=-1.0, hi=2.0, major=0.5, minor=5,
          alarm=1.75, decimals=1, theme=GREDDY, show=0.9),
-    dict(id="volts", caption="VOLTS", unit="", wordmark="R-GAUGE",
-         tagline="TUNING SYSTEM", lo=8, hi=16, major=1, minor=2,
+    dict(id="volts", caption="VOLTS", unit="", wordmark="epicEFI",
+ lo=8, hi=16, major=1, minor=2,
          alarm=None, decimals=1, theme=AMBER, show=13.8),
 ]
 
@@ -144,50 +146,68 @@ def render(p: dict) -> Image.Image:
     img = Image.new("RGB", (S, S), (14, 14, 16))
     d = ImageDraw.Draw(img)
 
+    # the rail spans [RAIL_R - BAND_W, RAIL_R]; PIL strokes about a centre line
     cx = cy = S / 2
-    rail = RAIL_R * SS
-    band_w = BAND_W * SS
     end = ROT + SWEEP
+    rail_mid = (RAIL_R - BAND_W / 2) * SS
+    band_w = BAND_W * SS
+    tick_base = (RAIL_R - BAND_W) * SS
+    alarm_out = (RAIL_R - BAND_W - TICK_MAJOR_LEN - ALARM_GAP) * SS
 
     r_outer = DIAL / 2 * SS
     d.ellipse([cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer],
               fill=th["face"], outline=th["bezel"], width=BEZEL_W * SS)
 
-    # glow: stacked translucent arcs behind the band
+    # glow: stacked translucent arcs behind the rail
     glow_w = BAND_W * 4 * SS
     for i in range(6, 0, -1):
         w = int(glow_w * i / 6)
         overlay = Image.new("RGB", (S, S), (0, 0, 0))
         od = ImageDraw.Draw(overlay)
-        od.arc([cx - rail, cy - rail, cx + rail, cy + rail], ROT, end,
+        od.arc([cx - rail_mid, cy - rail_mid, cx + rail_mid, cy + rail_mid], ROT, end,
                fill=th["band_glow"], width=w)
         mask = Image.new("L", (S, S), 0)
-        ImageDraw.Draw(mask).arc([cx - rail, cy - rail, cx + rail, cy + rail],
+        ImageDraw.Draw(mask).arc([cx - rail_mid, cy - rail_mid, cx + rail_mid, cy + rail_mid],
                                  ROT, end, fill=int(90 / i), width=w)
         img = Image.composite(overlay, img, mask)
     d = ImageDraw.Draw(img)
 
-    d.arc([cx - rail, cy - rail, cx + rail, cy + rail], ROT, end,
+    # the rail runs uninterrupted - the warning sector never paints over it
+    d.arc([cx - rail_mid, cy - rail_mid, cx + rail_mid, cy + rail_mid], ROT, end,
           fill=th["band"], width=band_w)
 
     majors = int(round((p["hi"] - p["lo"]) / p["major"]))
     total_ticks = majors * p["minor"] + 1
 
-    alarm_deg = None
+    # warning sector: a separate arc inboard of the ticks
     if p["alarm"] is not None and p["alarm"] <= p["hi"]:
         alarm_deg = angle_of(p["alarm"], p)
-        d.arc([cx - rail, cy - rail, cx + rail, cy + rail], alarm_deg, end,
-              fill=th["alarm"], width=band_w)
+        d.arc([cx - alarm_out, cy - alarm_out, cx + alarm_out, cy + alarm_out],
+              alarm_deg, end, fill=th["alarm"], width=ALARM_W * SS)
 
     for i in range(total_ticks):
         deg = ROT + SWEEP * i / (total_ticks - 1)
         is_major = (i % p["minor"]) == 0
-        ln = (TICK_MAJOR_LEN if is_major else TICK_MINOR_LEN) * SS
-        w = max(1, int((TICK_MAJOR_W if is_major else TICK_MINOR_W) * SS))
-        col = th["alarm"] if (is_major and alarm_deg is not None and deg >= alarm_deg) \
-            else (th["tick_major"] if is_major else th["tick_minor"])
-        d.line([polar(cx, cy, rail, deg), polar(cx, cy, rail - ln, deg)],
-               fill=col, width=w)
+        rad = math.radians(deg)
+        ux, uy = math.cos(rad), math.sin(rad)      # outward
+        vx, vy = -uy, ux                           # across
+
+        if not is_major:
+            # minor ticks are plain radial lines
+            p0 = (cx + tick_base * ux, cy + tick_base * uy)
+            p1 = (cx + (tick_base - TICK_MINOR_LEN * SS) * ux,
+                  cy + (tick_base - TICK_MINOR_LEN * SS) * uy)
+            d.line([p0, p1], fill=th["tick_minor"], width=max(1, TICK_MINOR_W * SS))
+            continue
+
+        # major ticks are wedges pointing at the centre
+        w = TICK_MAJOR_W * SS
+        r_tip = tick_base - TICK_MAJOR_LEN * SS
+        d.polygon([
+            (cx + tick_base * ux + w * vx, cy + tick_base * uy + w * vy),
+            (cx + tick_base * ux - w * vx, cy + tick_base * uy - w * vy),
+            (cx + r_tip * ux, cy + r_tip * uy),
+        ], fill=th["tick_major"])
 
     f_label = pick_font(int(F_LABEL * SS))
     labels = p.get("labels")
@@ -197,13 +217,17 @@ def render(p: dict) -> Image.Image:
         text_centered(d, polar(cx, cy, LABEL_R * SS, deg), txt, f_label, th["label"])
 
     # needle: the same tapered blade the firmware builds as a polygon in
-    # gauge_render.c, so the preview and the panel agree
-    theta = math.radians(angle_of(p["show"], p) - 90.0)   # gfx angle
+    # gauge_render.c.  angle_of() is already in the gfx convention (degrees
+    # clockwise from 3 o'clock), so no further offset.
+    theta = math.radians(angle_of(p["show"], p))
     ux, uy = math.cos(theta), math.sin(theta)
     vx, vy = -uy, ux
     blade = [(-5.0, 0.0), (-1.2, float(NEEDLE_LEN)), (1.2, float(NEEDLE_LEN)),
              (5.0, 0.0), (4.0, -13.0), (-4.0, -13.0)]
-    pts = [(cx + a * vx + b * ux, cy + a * vy + b * uy) for a, b in blade]
+    # cx/cy and the canvas are in supersampled units, so the blade has to be
+    # scaled up too or the needle comes out a third of its real length
+    pts = [(cx + (a * vx + b * ux) * SS, cy + (a * vy + b * uy) * SS)
+           for a, b in blade]
     d.polygon(pts, fill=th["needle"])
 
     hr = HUB_R * SS
@@ -217,7 +241,8 @@ def render(p: dict) -> Image.Image:
     f_unit = pick_font(int(F_SMALL * SS), bold=False)
 
     text_centered(d, (cx, cy + Y_WORDMARK * SS), p["wordmark"], f_word, th["wordmark"], 2 * SS)
-    text_centered(d, (cx, cy + Y_TAGLINE * SS), p["tagline"], f_tag, th["tagline"], SS)
+    if p.get("tagline"):
+        text_centered(d, (cx, cy + Y_TAGLINE * SS), p["tagline"], f_tag, th["tagline"], SS)
     text_centered(d, (cx, cy + Y_CAPTION * SS), p["caption"], f_cap, th["caption"], SS)
     text_centered(d, (cx, cy + Y_VALUE * SS), fmt(p["show"], p["decimals"]), f_val, th["value"])
     if p["unit"]:

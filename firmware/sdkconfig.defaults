@@ -38,3 +38,10 @@ CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 # Present (2 MB, in-package, quad) but not needed: the framebuffer is 115 KB
 # and there is ~240 KB of internal heap free.  Enable if assets ever need it.
 CONFIG_SPIRAM=n
+
+# --- Display -----------------------------------------------------------------
+# The panel is rated to 80 MHz.  A full 240x240 RGB565 frame is 115 KB, so the
+# SPI clock is the frame-rate ceiling: 40 MHz gives about 23 ms per frame,
+# 80 MHz about 11.5 ms.  Raise the backlight with `backlight 100`.
+CONFIG_BSP_LCD_SPI_CLK_MHZ=80
+CONFIG_BSP_BACKLIGHT_DEFAULT_PERCENT=60

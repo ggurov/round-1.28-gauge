@@ -18,8 +18,7 @@ static const char *const rpm_labels[] = {
 static const gauge_config_t s_rpm = {
     .caption         = "RPM",
 
-    .wordmark        = "R-GAUGE",
-    .tagline         = "TUNING SYSTEM",
+    .wordmark        = "epicEFI",
     .min             = 0.0f,
     .max             = 8000.0f,
     .major_step      = 1000.0f,
@@ -37,8 +36,7 @@ static const gauge_config_t s_rpm = {
 static const gauge_config_t s_temp = {
     .caption         = "CL TEMP",
 
-    .wordmark        = "R-GAUGE",
-    .tagline         = "TUNING SYSTEM",
+    .wordmark        = "epicEFI",
     .min             = 50.0f,
     .max             = 150.0f,
     .major_step      = 10.0f,
@@ -56,8 +54,7 @@ static const gauge_config_t s_temp = {
 static const gauge_config_t s_boost = {
     .caption         = "BOOST",
 
-    .wordmark        = "R-GAUGE",
-    .tagline         = "TUNING SYSTEM",
+    .wordmark        = "epicEFI",
     .min             = -1.0f,
     .max             = 2.0f,
     .major_step      = 0.5f,
@@ -75,8 +72,7 @@ static const gauge_config_t s_boost = {
 static const gauge_config_t s_volts = {
     .caption         = "VOLTS",
 
-    .wordmark        = "R-GAUGE",
-    .tagline         = "TUNING SYSTEM",
+    .wordmark        = "epicEFI",
     .min             = 8.0f,
     .max             = 16.0f,
     .major_step      = 1.0f,

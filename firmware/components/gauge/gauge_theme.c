@@ -26,6 +26,7 @@ const gauge_theme_t gauge_theme_greddy = {
     .unit            = 0x27B85E,
     .wordmark        = 0x46F08A,
     .tagline         = 0x1E9C4E,
+    .status          = 0x7C7C7C,
 
     .font_label      = GAUGE_FONT_20,
     .font_caption    = GAUGE_FONT_16,
@@ -36,9 +37,12 @@ const gauge_theme_t gauge_theme_greddy = {
 
     .band_gap        = 3,
     .band_width      = 5,
-    .tick_major_len  = 16,
-    .tick_minor_len  = 8,
-    .tick_major_width = 3,
+    .alarm_gap       = 1,
+    .alarm_width     = 4,
+    .tick_gap        = 1,
+    .tick_major_len  = 15,
+    .tick_minor_len  = 7,
+    .tick_major_width = 4,      /* half-width of the wedge */
     .tick_minor_width = 1,
     .bezel_width     = 4,
     .hub_radius      = 18,
@@ -66,6 +70,7 @@ const gauge_theme_t gauge_theme_amber = {
     .unit            = 0xB87400,
     .wordmark        = 0xFFB733,
     .tagline         = 0x8B5A00,
+    .status          = 0x8A7A5A,
 
     .font_label      = GAUGE_FONT_20,
     .font_caption    = GAUGE_FONT_16,
@@ -76,9 +81,12 @@ const gauge_theme_t gauge_theme_amber = {
 
     .band_gap        = 3,
     .band_width      = 5,
-    .tick_major_len  = 16,
-    .tick_minor_len  = 8,
-    .tick_major_width = 3,
+    .alarm_gap       = 1,
+    .alarm_width     = 4,
+    .tick_gap        = 1,
+    .tick_major_len  = 15,
+    .tick_minor_len  = 7,
+    .tick_major_width = 4,
     .tick_minor_width = 1,
     .bezel_width     = 4,
     .hub_radius      = 18,

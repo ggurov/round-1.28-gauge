@@ -1,129 +1,104 @@
 # Tests
 
-Three layers, cheapest first. `tools\test.ps1` runs the first two; add
-`-Device` for the third.
+Two suites, both run by `tools\test.ps1`:
 
 ```powershell
-tools\test.ps1                  # host unit tests + contract checks  (~2 s)
-tools\test.ps1 -Filter math     # only suites whose name contains "math"
-tools\test.ps1 -Device          # also build, flash and run on the ESP32-S3
+tools\test.ps1                  # everything, about two seconds
+tools\test.ps1 -Filter render   # only suites whose name contains "render"
 ```
+
+| Suite | Count | Needs hardware |
+|---|---|---|
+| Host unit tests (`tests/host`) | 81 | no |
+| Contract checks (`tests/py`) | 29 | no |
+
+There is no on-target test app. The graphics layer talks to the panel through
+exactly one function, so stubbing that makes the framebuffer, the drawing
+primitives and the whole gauge renderer testable on the desktop. That is where
+bugs get caught now.
 
 ## How tests register themselves
 
 There is no list to keep in sync. A test declares itself where it lives:
 
 ```c
-TF_TEST(gauge_math, value_to_angle_maps_endpoints)
+TF_TEST(gauge_render, needle_points_where_the_maths_says)
 {
-    TF_NEAR(gauge_math_value_to_angle(&RPM, 0.0f), 225.0, 1e-3);
+    gauge_render_t *g = make_rpm();
+    gauge_render_set_immediate(g, 4000.0f);
+    gauge_render_draw(g);
+    TF_CHECK_MSG(at(CX, CY - 60) == needle, "needle not straight up at 4000 rpm");
+    gauge_render_destroy(g);
 }
 ```
 
-`TF_TEST` expands to the test function plus a constructor that files it with
-the registry, so anything compiled into the binary is discovered at startup.
-On the target the same idea uses ESP-IDF's Unity:
+`TF_TEST` expands to the test function plus a constructor that files it with the
+registry, so anything compiled into the binary is discovered at startup.
 
-```c
-TEST_CASE("gauge: root fills the display", "[gauge]")
-{
-    ...
-}
-```
+## Layer 1 — host unit tests
 
-## Layer 1 — host unit tests (`tests/host`)
+Plain C compiled with the system GCC and linked against the **real** firmware
+sources. No hardware, no ESP-IDF.
 
-Plain C compiled with the system GCC, linked against the *real* source files
-from the firmware. No hardware, no ESP-IDF, under a second to run.
+The trick that makes this possible is in `tests/host/stub_bsp.c`: `gfx.c` calls
+`bsp_lcd_draw_bitmap()` and nothing else, so replacing that one function gives a
+real framebuffer with no SPI. `tests/host/esp_stub/` supplies two tiny headers
+(`esp_err.h`, `esp_lcd_types.h`) so `bsp.h` parses without ESP-IDF, and is placed
+first on the include path.
 
-This is possible because the logic is deliberately separated from LVGL:
+| File | Covers |
+|---|---|
+| `test_gauge_math.c` | angle mapping, tick counts, label formatting, the rail / tick-base / warning-sector radius chain, the needle slew filter |
+| `test_gauge_theme.c` | every theme produces a coherent dial: band fits the bezel, ticks hang inside the rail, the warning sector is inboard of the ticks, numerals clear both it and the hub |
+| `test_gauge_presets.c` | every preset is renderable: ordered ranges, tick budget fits the label storage, explicit labels match the tick count, generated labels fit their buffer, alarm band inside the range and wide enough to see |
+| `test_gfx.c` | the primitives: clipping at all four edges, disc/ring/circle geometry, arc band covers its sweep and nothing else, polygon fill, text ink and advance, blend endpoints |
+| `test_gauge_render.c` | the dial itself, rendered and inspected pixel by pixel: rail radius, warning sector inboard of the ticks, hub, needle direction at min/mid/max, needle never leaves the dial, read-out drawn, slew settles, layered geometry without overlaps |
 
-| File | Depends on | Covered by |
-|---|---|---|
-| `gauge_math.c` | libm only | host |
-| `gauge_theme.c` | nothing | host |
-| `gauge_presets.c` | string.h | host |
-| `gauge.c` | LVGL | device |
-| `gauge_needle.c` | LVGL + embedded blob | both |
+`test_gauge_render.c` is the one that earns its keep. It found a real bug where
+every glyph was drawn one ascent too low — on the panel that showed up as the
+bottom of the "6" disappearing into the green band behind it, which is exactly
+the sort of thing that is miserable to diagnose from a photograph.
 
-What is checked:
-
-* **`test_gauge_math.c`** — angle mapping (endpoints, midpoints, monotonicity,
-  exact sweep width), tick counts, label generation and formatting, the
-  rail/numeral/needle geometry formulae, and the needle slew filter including
-  convergence time, rate limiting and no-overshoot.
-* **`test_gauge_theme.c`** — every theme produces a coherent dial: the band fits
-  inside the bezel, major ticks are longer and thicker than minor ones, the
-  needle reaches past the numerals but stops short of the tick band, and the
-  hub never swallows the numerals.
-* **`test_gauge_presets.c`** — every preset is renderable: ranges are ordered,
-  the tick budget fits the label storage, explicit label arrays match the tick
-  count, generated labels fit their buffer, the alarm band is inside the range
-  and wide enough to see, and the whole dial geometry is self-consistent.
-* **`test_needle_asset.c`** — the generated sprite matches the constants in
-  `gauge_needle_size.h`: exact byte size, pivot covered, tip at the declared
-  distance, blade symmetric, edges anti-aliased, and every pixel pure white so
-  the theme's `image_recolor` tints it correctly.
-
-The framework lives in `tests/host/test_framework.{h,c}`. Assertions come in
-soft (`TF_CHECK`, `TF_EQ_INT`, `TF_NEAR`, `TF_STR_EQ`, …) and hard (`TF_REQUIRE`,
+The framework is `tests/host/test_framework.{h,c}`. Assertions come in soft
+(`TF_CHECK`, `TF_EQ_INT`, `TF_NEAR`, `TF_STR_EQ`, …) and hard (`TF_REQUIRE`,
 which abandons the current test).
 
-## Layer 2 — contract checks (`tests/py/test_contracts.py`)
+## Layer 2 — contract checks
 
-Guards the assumptions the firmware makes about things it does not own, and
-about its own generated artefacts. These are exactly the assumptions that rot
-silently on an upgrade.
+`tests/py/test_contracts.py` guards the assumptions the firmware makes about its
+own generated artefacts. These are the assumptions that rot silently.
 
-* **`LV_SCALE_DEFAULT_LABEL_GAP` must still equal `GAUGE_LABEL_GAP`.** The
-  numeral radius is derived from this private LVGL constant; if an LVGL bump
-  changes it, every numeral on the dial moves. The check reads the constant
-  straight out of `lv_scale.c`.
-* **`tools/gen_needle.py` must agree with `gauge_needle_size.h`** — otherwise
-  the sprite and the pivot the widget rotates about drift apart.
-* **Every Montserrat size a theme asks for must be enabled in
-  `sdkconfig.defaults`.** A missing font falls back silently and changes the
-  layout.
+* **`tools/gen_font.py` must agree with the generated `gfx_font_data.c`** — every
+  declared font present, at the declared pixel size, with a contiguous charset
+  matching the emitted `first`/`count`.
+* **Every character the gauge draws must be inside the font's range.** A stray
+  degree sign or en-dash has no glyph and renders as nothing at all.
 * **`tools/render_preview.py` must match the firmware** — same preset ids, same
   bezel/band/tick/hub dimensions — so the host previews stay trustworthy.
-
-## Layer 3 — device tests (`tests/device`)
-
-An ESP-IDF app that runs ESP-IDF's Unity against the **real LVGL object tree**,
-using a headless 240×240 display (`lvgl_test_env.c`) so no panel or SPI setup is
-involved. They pass even on a board with a dead display.
-
-```powershell
-tools\test.ps1 -Device
-tools\test.ps1 -Device -Port COM7
-```
-
-What is checked: every preset builds, renders and tears down; the root fills the
-display; defaults are resolved on the live object; needle rotation tracks the
-value; the pivot lands on the dial centre; values clamp; the read-out matches
-each preset's `decimals`; the needle slews rather than jumps and never leaves
-the dial while doing so; create/delete is leak-free (LVGL's heap is compared
-before and after); and the embedded needle blob resolves with the right header
-and pixel data — which is what catches an `EMBED_FILES` linker-symbol change.
-
-The app prints a final machine-readable line that
-[`tools/run_device_tests.py`](../tools/run_device_tests.py) waits for:
-
-```
-TESTS_COMPLETE total=11 failures=0 ignored=0
-```
-
-Because the board cannot be reset over USB, the runner waits patiently and
-prints a hint to press RESET if the chip is still sitting in the ROM bootloader
-after flashing.
+* **LVGL must not creep back in** — not a managed dependency, no `CONFIG_LV_*`
+  in `sdkconfig.defaults`, no `#include "lvgl…"` anywhere.
 
 ## Adding a test
 
-1. Put host-testable logic in `gauge_math.c` / `gauge_theme.c` /
-   `gauge_presets.c` rather than in `gauge.c`.
+1. Put host-testable logic in `gauge_math.c`, `gauge_theme.c`,
+   `gauge_presets.c` or `gfx.c` rather than in `bsp.c`.
 2. Add a `TF_TEST(...)` anywhere under `tests/host/` — it is picked up
-   automatically.
-3. Add a `TEST_CASE(...)` under `tests/device/main/` for anything that needs
-   real LVGL objects.
-4. If you introduce a dependency on a third-party constant or on a generated
+   automatically. If you add a new `.c` file, add it to the `$sources` list in
+   `tools/test.ps1`.
+3. If you introduce a dependency on a third-party constant or a generated
    asset, add a contract check in `tests/py/test_contracts.py`.
+
+## A note on test expectations
+
+Two of the original tests were wrong, not the code, and it is worth knowing why
+so the same mistake is not repeated:
+
+* `gfx_ring(cx, cy, r_outer, r_inner)` leaves `[cx-r_inner, cx+r_inner]` clear.
+  Sampling exactly on the inner edge is inside the hole, not on the band.
+* `gfx_fill_polygon` uses the standard scanline rule which excludes a polygon's
+  topmost row. Sampling the very top row of an arc-band slice finds nothing.
+  Sample mid-slice and mid-radius instead.
+
+When a new test fails, check the expectation before changing the code — but
+check the code before changing the expectation, too. The text-placement failures
+above turned out to be a genuine firmware bug.

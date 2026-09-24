@@ -32,13 +32,12 @@ int gfx_text_width(const char *text, const gfx_font_t *font)
     return pen;
 }
 
-void gfx_text(int x, int y, const char *text, const gfx_font_t *font, uint16_t colour)
+void gfx_text(int x, int baseline_y, const char *text, const gfx_font_t *font, uint16_t colour)
 {
     if (!text || !font) {
         return;
     }
 
-    const int baseline = y + font->ascent;
     int pen = x;
 
     for (const char *p = text; *p; p++) {
@@ -53,7 +52,7 @@ void gfx_text(int x, int y, const char *text, const gfx_font_t *font, uint16_t c
         }
 
         const int gx = pen + g->bearing_x;
-        const int gy = baseline + g->bearing_y;
+        const int gy = baseline_y + g->bearing_y;
         const uint8_t *src = &font->alpha[g->offset];
 
         for (int row = 0; row < g->h; row++) {
@@ -81,14 +80,25 @@ void gfx_text(int x, int y, const char *text, const gfx_font_t *font, uint16_t c
     }
 }
 
-void gfx_text_centered(int cx, int y, const char *text, const gfx_font_t *font,
+void gfx_text_centered(int cx, int baseline_y, const char *text, const gfx_font_t *font,
                        uint16_t colour)
 {
-    gfx_text(cx - gfx_text_width(text, font) / 2, y, text, font, colour);
+    gfx_text(cx - gfx_text_width(text, font) / 2, baseline_y, text, font, colour);
 }
 
-void gfx_text_right(int x_right, int y, const char *text, const gfx_font_t *font,
+void gfx_text_right(int x_right, int baseline_y, const char *text, const gfx_font_t *font,
                     uint16_t colour)
 {
-    gfx_text(x_right - gfx_text_width(text, font), y, text, font, colour);
+    gfx_text(x_right - gfx_text_width(text, font), baseline_y, text, font, colour);
+}
+
+void gfx_text_cap_centered(int cx, int cy, const char *text, const gfx_font_t *font,
+                           uint16_t colour)
+{
+    if (!font) {
+        return;
+    }
+    /* put the middle of the cap band on cy: baseline = cy + cap/2 */
+    const int baseline = cy + font->cap_height / 2;
+    gfx_text(cx - gfx_text_width(text, font) / 2, baseline, text, font, colour);
 }

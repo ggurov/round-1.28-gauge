@@ -16,8 +16,8 @@ The Xtensa toolchain, OpenOCD, GDB, CMake, Ninja and ccache all come from
 
 ```
 xtensa-esp-elf        esp-14.2.0        compiler
-xtensa-esp-elf-gdb    (gdb)             debugger
-openocd-esp32         (openocd)         on-chip debug
+xtensa-esp-elf-gdb                      debugger
+openocd-esp32                           on-chip debug
 cmake, ninja, ccache, idf-exe
 ```
 
@@ -32,9 +32,6 @@ tools\idf.bat menuconfig
 tools\idf.bat size
 ```
 
-Override the install location with the `IDF_PATH` / `IDF_TOOLS_PATH`
-environment variables if yours lives elsewhere.
-
 To reproduce the install from scratch:
 
 ```powershell
@@ -47,56 +44,51 @@ cd C:\Espressif\frameworks\esp-idf-v5.5.5
 
 ## Managed components
 
-Pulled from `components.espressif.com` on first configure, pinned in
-`dependencies.lock`:
+| Component | Version | Why |
+|---|---|---|
+| `espressif/esp_lcd_gc9a01` | 2.0.4 | panel command interface only; the init sequence comes from Waveshare |
 
-| Component | Version |
-|---|---|
-| `lvgl/lvgl` | 9.6.0 |
-| `espressif/esp_lcd_gc9a01` | 2.0.4 |
-
-Bump with `tools\idf.bat update-dependencies` or by clearing
-`dependencies.lock`.
+LVGL is deliberately **not** a dependency — see
+[`hardware.md`](hardware.md#fault-1--the-display-only-painted-part-of-the-dial).
+A contract check fails if it creeps back in.
 
 ## Build and flash cycle
 
 ```powershell
-# 1. put the board in the ROM bootloader (see docs/hardware.md)
-#    from the running app:  type `bootloader` at the gauge> prompt
+# 1. put the board in the ROM bootloader
+#    from the running app, type `bootloader` at the gauge> prompt
 
 # 2. flash
 tools\idf.bat -p COM6 flash monitor
 
-# 3. if the app does not come up, press RESET once
+# 3. exit the monitor with Ctrl+]
 ```
 
-Exit the monitor with `Ctrl+]`.
+`tools\flash.ps1` wraps that into one command and `tools\flash.ps1 -NoMonitor`
+skips the monitor.
 
-`tools\flash.ps1` wraps steps 1–2:
-
-```powershell
-tools\flash.ps1              # COM6 by default
-tools\flash.ps1 -Port COM7
-```
-
-It opens the port, sends the `bootloader` command, waits for the chip to
-re-enumerate, then runs `idf.py flash monitor`.
+No button presses are needed: `EN` is wired to the CH343P's RTS line so esptool
+restarts the chip itself after flashing. See
+[`hardware.md`](hardware.md#the-reset-lines-correctly).
 
 ## Testing
 
 ```powershell
-tools\test.ps1                  # host unit tests + contract checks  (~2 s)
-tools\test.ps1 -Filter math     # only suites whose name contains "math"
-tools\test.ps1 -Device          # also build, flash and run on the board
+tools\test.ps1                  # host unit tests + contract checks (~2 s)
+tools\test.ps1 -Filter render   # only suites whose name contains "render"
 ```
 
-Run this before flashing anything: the host tests take about a second and cover
-all the geometry, preset validation and slew-filter maths, so a broken dial is
-caught on the desktop rather than on the panel.
+Run this before flashing anything. It is fast, needs no hardware, and covers
+the whole renderer.
 
-Tests register themselves — `TF_TEST(suite, name)` on the host and
-`TEST_CASE(name, "[tag]")` on the target — so there is no list to maintain. See
-[`tests/README.md`](../tests/README.md) for what each suite covers.
+The key enabler: **`gfx` talks to the panel through exactly one function**
+(`bsp_lcd_draw_bitmap`). Stubbing that lets `gfx.c`, `gfx_text.c` and
+`gauge_render.c` be compiled and exercised on the desktop with a real
+framebuffer. That is where most bugs get caught now — the host tests found a
+real one where every glyph was drawn one ascent too low, which on the panel
+showed up as the bottom of the "6" vanishing into the green band behind it.
+
+See [`tests/README.md`](../tests/README.md).
 
 The host tests need a native compiler. They default to MSYS2's
 `C:\msys64\mingw64\bin\gcc.exe`; override with `-Gcc <path>`. Nothing else in
@@ -104,85 +96,78 @@ the project needs it.
 
 ## Configuration
 
-Board-level settings live under **`menuconfig → Round gauge BSP`** so you can
-change pins and the SPI clock without touching code:
+Board settings live under **`menuconfig → Round gauge BSP`**:
 
 | Option | Default | Notes |
 |---|---|---|
-| `BSP_LCD_SPI_CLK_MHZ` | 80 | drop to 40 if the panel shimmers |
-| `BSP_LCD_INVERT_COLOR` | y | off if the dial looks like a negative |
+| `BSP_LCD_SPI_CLK_MHZ` | 80 | sets the frame-rate ceiling: 115 KB per frame |
 | `BSP_LCD_SWAP_RGB565_BYTES` | y | off if colours are wrong but shapes are right |
-| `BSP_LCD_BUFFER_LINES` | 40 | bigger = fewer, longer SPI bursts |
-| `BSP_BACKLIGHT_DEFAULT_PERCENT` | 85 | boot brightness |
+| `BSP_BACKLIGHT_DEFAULT_PERCENT` | 60 | raise with `backlight 100` |
 
-Deliberate defaults in `sdkconfig.defaults`:
-
-* `CONFIG_SPIRAM=n` — the 2 MB in-package PSRAM is there but nothing needs it
-  yet, and PSRAM timing is a common cause of boot loops. Turn it on when you
-  start storing real assets.
-* Two 4 MB OTA app slots, so a future serial/OTA updater has somewhere to write.
-* `CONFIG_FREERTOS_HZ=1000` — the gauge slew timer runs at 16 ms.
+`CONFIG_SPIRAM=n` on purpose: nothing needs it and PSRAM timing is a common
+cause of boot loops.
 
 ## Design notes
 
 ### Layering, and why it matters for tests
-
-The widget is split so that everything deciding *where* things land is free of
-LVGL:
 
 | File | Depends on | Tested by |
 |---|---|---|
 | `gauge_math.c` | libm only | host unit tests |
 | `gauge_theme.c` | nothing | host unit tests |
 | `gauge_presets.c` | string.h | host unit tests |
-| `gauge.c` | LVGL | on-target Unity tests |
-| `gauge_needle.c` | LVGL + embedded blob | both |
+| `gfx.c` | one BSP call | host unit tests, panel stubbed |
+| `gfx_text.c` | `gfx.c` | host unit tests |
+| `gauge_render.c` | `gfx` | host unit tests |
+| `bsp.c` | ESP-IDF | hardware only |
 
-That is what lets 63 tests run in under a second with no hardware. Resist the
-temptation to move arithmetic into `gauge.c`.
+Resist moving arithmetic into `gauge_render.c` or `bsp.c`.
 
-### Why LVGL
+### Frame budget
 
-The gauge needs anti-aliased arcs, rotated sprites and cheap partial redraws.
-LVGL 9.6 gives all three — `lv_scale` in `ROUND_INNER` mode draws the rail,
-major/minor ticks, numerals and coloured sections natively, and
-`lv_image_set_rotation()` rotates the needle sprite about the dial centre. The
-whole dial is vector, so changing the range or tick spacing re-renders instead
-of requiring new artwork.
+A full 240×240 RGB565 frame is 115 KB. At 80 MHz that is **11.5 ms of SPI**,
+which is the frame-rate ceiling; the render is a couple of milliseconds on top.
+Measured on the dial: **38.5 fps**.
 
-The one thing worth knowing about `lv_scale` is where it puts things, because
-the gauge's geometry is derived from it:
+Three things got it there, in order of how much they mattered:
 
-```
-rail radius      = scale_diameter / 2
-major tick       = rail .. rail - tick_major_len
-numeral centre   = rail - tick_major_len - pad_radial - 15 - letter_space
-```
+1. **Raising the SPI clock 40 → 80 MHz** (26.6 → 38.5 fps)
+2. **Not sleeping a fixed 20 ms per frame** (18.2 → 26.6 fps) — the loop now
+   measures the real frame interval and passes it to the slew filter, so the
+   panel sets the rate rather than the delay
+3. **Drawing the warning sector as one arc band** rather than stamping a thick
+   arc, which would have been thousands of discs per frame
 
-That `15` is LVGL's private `LV_SCALE_DEFAULT_LABEL_GAP`. It is mirrored as
-`GAUGE_LABEL_GAP` and a contract check fails if LVGL ever changes it.
+`gfx_flush_rect()` exists for partial updates if a future design needs them,
+but the current renderer always redraws the whole dial: at these sizes the
+render is cheap and there is no cached state to fall out of step with the panel.
 
-### Why the needle is a sprite
+### Why the fonts are generated
 
-The blade is rasterised once by [`tools/gen_needle.py`](../tools/gen_needle.py)
-with 4× supersampling and shipped as a white-with-alpha blob, which the theme
-tints at runtime through `image_recolor`. That means changing the needle colour
-is a one-line theme edit, not a re-export.
+`tools/gen_font.py` rasterises a system TTF into 8-bit coverage masks, emitted
+as `gfx_font_data.c`. No font library runs on the device, the glyphs are
+anti-aliased, and the whole set is 64 KB of flash.
 
-The blob is embedded with ESP-IDF's `EMBED_FILES` rather than committed as a
-generated `.c` array — a 121 KB binary instead of a ~900 KB source file, and it
-compiles instantly. `gauge_needle.c` wraps it in an `lv_image_dsc_t` at runtime;
-the linker symbol name is derived from the asset path, so a test asserts the
-descriptor actually resolves.
+Two details that are easy to get wrong and are both covered by tests:
+
+* **`bearing_y` is measured from the baseline**, not the ascender. PIL places
+  the text origin on the ascender line, so the ascent has to be subtracted
+  again. Getting this wrong draws every glyph one ascent too low.
+* **The charset is a contiguous `0x20..0x7E`**, so the device can index glyphs
+  with `(c - first)` and needs no lookup table. A non-contiguous set silently
+  indexes the wrong glyph.
+
+Text is positioned on **cap height**, not line height: the ascent includes room
+that digits and capitals never use, so centring on the line box puts text
+visibly low. Use `gfx_text_cap_centered()`.
 
 ### Why the needle slews
 
-`gauge_set_value()` only stores a target. A 16 ms `lv_timer` moves `displayed`
+`gauge_render_set_value()` only stores a target. The task moves `displayed`
 toward it with an exponential approach capped by a maximum slew rate, so the
 needle accelerates off a stop and settles like a real moving-coil movement.
 `slew_time` in the config is the time for a full-scale ramp — 0.30 s for a
-tachometer, 2.0 s for a temperature gauge — and the exponential tail adds about
-half as much again to settle.
+tachometer, 2.0 s for a temperature gauge.
 
 ### Why the console comes first
 
@@ -203,13 +188,11 @@ on UART0 at 115200.
 GPIO40 is the backlight. OpenOCD and GDB are installed and ready if the pins are
 ever remapped or brought out to the 1.27 mm headers.
 
-## Regenerating the needle
+## Regenerating the fonts
 
 ```powershell
-python tools\gen_needle.py
+python tools\gen_font.py
 ```
 
-Writes `firmware/components/gauge/assets/needle_argb8888.bin` plus a PNG
-preview in `tools/preview/`. Keep `BLADE_LEN` in step with
-`GAUGE_NEEDLE_TIP_DISTANCE` in
-[`gauge_needle.h`](../firmware/components/gauge/include/gauge_needle.h).
+Writes `firmware/components/gfx/gfx_font_data.c` and its header. A contract
+check fails if the generated file drifts from the generator's declared sizes.
