@@ -1,25 +1,43 @@
 /*
- * app_main.c - Round 1.28 Gauge bring-up.
+ * app_main.c - Round 1.28 Gauge
  *
- * No graphics library.  The panel is driven from a plain RGB565 framebuffer in
- * the gfx component, and this app currently draws test screens so the panel can
- * be verified before any gauge code is layered on top.
+ * Waveshare ESP32-S3-LCD-1.28 turned into a GReddy-flavoured automotive
+ * instrument, drawn straight into an RGB565 framebuffer.  No graphics library:
+ * see README.md for why LVGL was dropped.
  *
- * Order matters: the console comes up before the display so a dead panel never
- * locks you out of the board.
+ * Boot order matters: the console comes up before the display so that a dead
+ * panel, a blown SPI configuration or a bad theme can never lock you out.
  */
 #include <stdio.h>
 
 #include "app_console.h"
+#include "app_gauge.h"
 #include "app_tests.h"
 #include "bsp.h"
 #include "esp_err.h"
 #include "esp_log.h"
 #include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "gfx.h"
+#include "gauge_presets.h"
 #include "nvs_flash.h"
 
 static const char *TAG = "app";
+
+/*
+ * White, red, green, blue - the classic panel self-test - so a colour-order or
+ * inversion mistake is obvious within a second of power-up.
+ */
+static void panel_selftest(void)
+{
+    static const uint16_t flashes[] = {0xFFFF, 0xF800, 0x07E0, 0x001F};
+    for (int i = 0; i < (int)(sizeof(flashes) / sizeof(flashes[0])); i++) {
+        gfx_clear(flashes[i]);
+        gfx_flush();
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
+}
 
 void app_main(void)
 {
@@ -31,7 +49,7 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
 
     printf("\n\n");
-    ESP_LOGI(TAG, "round-1.28-gauge bring-up (ESP-IDF %s, chip %s, no LVGL)",
+    ESP_LOGI(TAG, "round-1.28-gauge (ESP-IDF %s, chip %s, no graphics library)",
              esp_get_idf_version(), CONFIG_IDF_TARGET);
 
     /* 1. Console first - the recovery path. */
@@ -41,17 +59,19 @@ void app_main(void)
     err = bsp_display_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "display init failed: %s (0x%x)", esp_err_to_name(err), err);
-        ESP_LOGW(TAG, "No display, but the console is alive.");
-        ESP_LOGW(TAG, "Check pins and clock under menuconfig -> Round gauge BSP.");
-        ESP_LOGW(TAG, "Then `bootloader` and reflash.");
+        ESP_LOGW(TAG, "No dial, but the console is alive.");
+        ESP_LOGW(TAG, "Check pins and clock under menuconfig -> Round gauge BSP,");
+        ESP_LOGW(TAG, "then `bootloader` and reflash.");
         return;
     }
 
     gfx_init();
 
-    /* 3. Panel self-test, then leave a test screen up. */
-    app_boot_sequence();
+    /* 3. Prove the panel works, then put the gauge up. */
+    panel_selftest();
+    app_gauge_start();
 
     printf("\n");
-    ESP_LOGI(TAG, "Ready. `test <fill|bars|grid|circle|quad>`, `next`, `help`.");
+    ESP_LOGI(TAG, "Running. `help` for commands, `gauge` to change instrument,");
+    ESP_LOGI(TAG, "`bootloader` to reflash, `test` for bring-up screens.");
 }

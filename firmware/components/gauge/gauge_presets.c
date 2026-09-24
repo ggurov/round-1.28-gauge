@@ -17,7 +17,7 @@ static const char *const rpm_labels[] = {
 
 static const gauge_config_t s_rpm = {
     .caption         = "RPM",
-    .unit            = "x1000 r/min",
+
     .wordmark        = "R-GAUGE",
     .tagline         = "TUNING SYSTEM",
     .min             = 0.0f,
@@ -36,7 +36,7 @@ static const gauge_config_t s_rpm = {
 /* -------------------------------------------------------------------------- */
 static const gauge_config_t s_temp = {
     .caption         = "CL TEMP",
-    .unit            = "DEG C",
+
     .wordmark        = "R-GAUGE",
     .tagline         = "TUNING SYSTEM",
     .min             = 50.0f,
@@ -55,7 +55,7 @@ static const gauge_config_t s_temp = {
 /* -------------------------------------------------------------------------- */
 static const gauge_config_t s_boost = {
     .caption         = "BOOST",
-    .unit            = "BAR",
+
     .wordmark        = "R-GAUGE",
     .tagline         = "TUNING SYSTEM",
     .min             = -1.0f,
@@ -74,7 +74,7 @@ static const gauge_config_t s_boost = {
 /* -------------------------------------------------------------------------- */
 static const gauge_config_t s_volts = {
     .caption         = "VOLTS",
-    .unit            = "V DC",
+
     .wordmark        = "R-GAUGE",
     .tagline         = "TUNING SYSTEM",
     .min             = 8.0f,

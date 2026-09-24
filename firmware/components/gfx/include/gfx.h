@@ -63,6 +63,14 @@ void gfx_arc(int cx, int cy, int radius, int width, int a0, int a1, uint16_t col
 /* Filled convex or concave polygon, scanline filled. */
 void gfx_fill_polygon(const int *xs, const int *ys, int count, uint16_t colour);
 
+/*
+ * A filled annulus sector - the gauge's glowing band.  Much cheaper than
+ * stamping a thick arc, and it gives square ends, which is what an instrument
+ * band looks like.
+ */
+void gfx_arc_band(int cx, int cy, int r_outer, int r_inner, int a0, int a1,
+                  uint16_t colour);
+
 /* Blit the whole framebuffer, or just a rectangle of it, to the panel. */
 void gfx_flush(void);
 void gfx_flush_rect(int x0, int y0, int x1, int y1);

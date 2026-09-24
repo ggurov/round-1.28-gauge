@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "app_gauge.h"
 #include "bsp.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
@@ -100,6 +101,9 @@ static void test_quad(void)
 
 void app_show_test(const char *name)
 {
+    /* a test screen owns the display; stop the gauge redrawing over it */
+    app_gauge_stop();
+
     if (!name || !*name) {
         name = k_tests[s_current];
     } else {
@@ -131,22 +135,5 @@ void app_show_test(const char *name)
 void app_next_test(void)
 {
     s_current = (s_current + 1) % (int)TEST_COUNT;
-    app_show_test(NULL);
-}
-
-void app_boot_sequence(void)
-{
-    /* White, red, green, blue - the classic panel self-test - then settle on
-     * the grid, which is the most informative static screen. */
-    static const uint16_t flashes[] = {
-        0xFFFF, 0xF800, 0x07E0, 0x001F,
-    };
-    for (int i = 0; i < (int)(sizeof(flashes) / sizeof(flashes[0])); i++) {
-        gfx_clear(flashes[i]);
-        gfx_flush();
-        vTaskDelay(pdMS_TO_TICKS(250));
-    }
-
-    s_current = 2;   /* grid */
     app_show_test(NULL);
 }

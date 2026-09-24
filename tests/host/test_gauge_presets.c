@@ -104,7 +104,10 @@ TF_TEST(gauge_presets, ranges_are_well_formed)
         TF_LE(c->decimals, 2);
         TF_CHECK_MSG(c->slew_time > 0.0f, "%s: slew_time must be positive", p->id);
         TF_NOT_NULL(c->caption);
-        TF_NOT_NULL(c->unit);
+        /* unit and the branding lines are optional */
+        if (c->unit) {
+            TF_CHECK_MSG(strlen(c->unit) < 40, "%s: unit text is unreasonable", p->id);
+        }
         TF_NOT_NULL(c->theme);
         TF_CHECK_MSG(theme_is_known(c->theme), "%s: theme is not one of the built-ins", p->id);
     }

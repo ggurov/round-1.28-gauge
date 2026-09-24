@@ -345,6 +345,46 @@ void gfx_fill_polygon(const int *xs, const int *ys, int count, uint16_t colour)
 
 /* -------------------------------------------------------------------------- */
 
+void gfx_arc_band(int cx, int cy, int r_outer, int r_inner, int a0, int a1,
+                  uint16_t colour)
+{
+    if (r_inner < 0) r_inner = 0;
+    if (r_outer <= r_inner) return;
+
+    int sweep = a1 - a0;
+    while (sweep < 0) {
+        sweep += 360;
+    }
+    if (sweep == 0) {
+        sweep = 360;
+    }
+
+    /* Two degrees per slice: at the radii this gauge uses that is under 4 px of
+     * chord, so the band reads as a smooth arc. */
+    const int slices = (sweep + 1) / 2;
+    const float step = (float)sweep / (float)slices;
+
+    for (int i = 0; i < slices; i++) {
+        const float d0 = (float)a0 + step * (float)i;
+        const float d1 = d0 + step;
+        const float r0 = d0 * (float)M_PI / 180.0f;
+        const float r1 = d1 * (float)M_PI / 180.0f;
+
+        int px[4], py[4];
+        px[0] = cx + (int)lroundf((float)r_outer * cosf(r0));
+        py[0] = cy + (int)lroundf((float)r_outer * sinf(r0));
+        px[1] = cx + (int)lroundf((float)r_outer * cosf(r1));
+        py[1] = cy + (int)lroundf((float)r_outer * sinf(r1));
+        px[2] = cx + (int)lroundf((float)r_inner * cosf(r1));
+        py[2] = cy + (int)lroundf((float)r_inner * sinf(r1));
+        px[3] = cx + (int)lroundf((float)r_inner * cosf(r0));
+        py[3] = cy + (int)lroundf((float)r_inner * sinf(r0));
+        gfx_fill_polygon(px, py, 4, colour);
+    }
+}
+
+/* -------------------------------------------------------------------------- */
+
 void gfx_flush_rect(int x0, int y0, int x1, int y1)
 {
     if (x0 < 0) x0 = 0;

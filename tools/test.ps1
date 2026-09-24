@@ -66,7 +66,6 @@ if (-not $SkipHost) {
             'tests\host\test_gauge_math.c'
             'tests\host\test_gauge_theme.c'
             'tests\host\test_gauge_presets.c'
-            'tests\host\test_needle_asset.c'
             'firmware\components\gauge\gauge_math.c'
             'firmware\components\gauge\gauge_theme.c'
             'firmware\components\gauge\gauge_presets.c'

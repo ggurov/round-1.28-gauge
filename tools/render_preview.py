@@ -17,12 +17,8 @@ from __future__ import annotations
 
 import math
 import os
-import sys
 
 from PIL import Image, ImageDraw, ImageFont
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from gen_needle import POLY, PIVOT, SIZE as NEEDLE_SIZE  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT_DIR = os.path.join(REPO, "tools", "preview")
@@ -44,12 +40,13 @@ LABEL_ROTATE = 0            # numerals stay upright
 HUB_R = 18
 Y_WORDMARK = -(HUB_R + 26)
 Y_TAGLINE = -(HUB_R + 10)
-Y_CAPTION = HUB_R + 16
-Y_VALUE = HUB_R + 42
-Y_UNIT = HUB_R + 68
+Y_CAPTION = HUB_R + 14
+Y_VALUE = HUB_R + 36
+Y_UNIT = HUB_R + 58
 
-F_LABEL, F_CAPTION, F_VALUE = 20, 16, 30
-F_UNIT, F_WORD, F_TAG = 12, 14, 10
+F_LABEL = 22       # gfx_font_label
+F_VALUE = 32       # gfx_font_value
+F_SMALL = 13       # gfx_font_small, used for every label except those two
 
 # LVGL's lv_scale places the numeral centre at:
 #   radius - major_len - (pad_radial + LV_SCALE_DEFAULT_LABEL_GAP)
@@ -83,17 +80,17 @@ AMBER = dict(
 
 # ---- presets, mirrors gauge_presets.c ------------------------------------
 PRESETS = [
-    dict(id="rpm", caption="RPM", unit="x1000 r/min", wordmark="R-GAUGE",
+    dict(id="rpm", caption="RPM", unit="", wordmark="R-GAUGE",
          tagline="TUNING SYSTEM", lo=0, hi=8000, major=1000, minor=4,
          alarm=6500, decimals=0, theme=GREDDY, show=4200,
          labels=["0", "1", "2", "3", "4", "5", "6", "7", "8"]),
-    dict(id="temp", caption="CL TEMP", unit="DEG C", wordmark="R-GAUGE",
+    dict(id="temp", caption="CL TEMP", unit="", wordmark="R-GAUGE",
          tagline="TUNING SYSTEM", lo=50, hi=150, major=10, minor=2,
          alarm=115, decimals=0, theme=GREDDY, show=92),
-    dict(id="boost", caption="BOOST", unit="BAR", wordmark="R-GAUGE",
+    dict(id="boost", caption="BOOST", unit="", wordmark="R-GAUGE",
          tagline="TUNING SYSTEM", lo=-1.0, hi=2.0, major=0.5, minor=5,
          alarm=1.75, decimals=1, theme=GREDDY, show=0.9),
-    dict(id="volts", caption="VOLTS", unit="V DC", wordmark="R-GAUGE",
+    dict(id="volts", caption="VOLTS", unit="", wordmark="R-GAUGE",
          tagline="TUNING SYSTEM", lo=8, hi=16, major=1, minor=2,
          alarm=None, decimals=1, theme=AMBER, show=13.8),
 ]
@@ -199,34 +196,32 @@ def render(p: dict) -> Image.Image:
         txt = labels[i] if labels else fmt(p["lo"] + p["major"] * i, p["decimals"])
         text_centered(d, polar(cx, cy, LABEL_R * SS, deg), txt, f_label, th["label"])
 
-    # needle
-    scale = NEEDLE_LEN / 86.0
-    nw = int(round(NEEDLE_SIZE * scale * SS))
-    nimg = Image.new("RGBA", (NEEDLE_SIZE, NEEDLE_SIZE), (0, 0, 0, 0))
-    ImageDraw.Draw(nimg).polygon([(PIVOT + x, PIVOT + y) for x, y in POLY],
-                                 fill=th["needle"] + (255,))
-    nimg = nimg.resize((nw, nw), Image.LANCZOS)
-    theta = angle_of(p["show"], p)
-    pivot_px = PIVOT * nw / NEEDLE_SIZE
-    nimg = nimg.rotate(-(theta - 270.0), resample=Image.BICUBIC,
-                       center=(pivot_px, pivot_px))
-    img.paste(nimg, (int(round(cx - pivot_px)), int(round(cy - pivot_px))), nimg)
+    # needle: the same tapered blade the firmware builds as a polygon in
+    # gauge_render.c, so the preview and the panel agree
+    theta = math.radians(angle_of(p["show"], p) - 90.0)   # gfx angle
+    ux, uy = math.cos(theta), math.sin(theta)
+    vx, vy = -uy, ux
+    blade = [(-5.0, 0.0), (-1.2, float(NEEDLE_LEN)), (1.2, float(NEEDLE_LEN)),
+             (5.0, 0.0), (4.0, -13.0), (-4.0, -13.0)]
+    pts = [(cx + a * vx + b * ux, cy + a * vy + b * uy) for a, b in blade]
+    d.polygon(pts, fill=th["needle"])
 
     hr = HUB_R * SS
     d.ellipse([cx - hr, cy - hr, cx + hr, cy + hr], fill=th["hub"],
               outline=th["hub_ring"], width=2 * SS)
 
-    f_word = pick_font(int(F_WORD * SS))
-    f_tag = pick_font(int(F_TAG * SS), bold=False)
-    f_cap = pick_font(int(F_CAPTION * SS))
+    f_word = pick_font(int(F_SMALL * SS))
+    f_tag = pick_font(int(F_SMALL * SS), bold=False)
+    f_cap = pick_font(int(F_SMALL * SS))
     f_val = pick_font(int(F_VALUE * SS))
-    f_unit = pick_font(int(F_UNIT * SS), bold=False)
+    f_unit = pick_font(int(F_SMALL * SS), bold=False)
 
     text_centered(d, (cx, cy + Y_WORDMARK * SS), p["wordmark"], f_word, th["wordmark"], 2 * SS)
     text_centered(d, (cx, cy + Y_TAGLINE * SS), p["tagline"], f_tag, th["tagline"], SS)
     text_centered(d, (cx, cy + Y_CAPTION * SS), p["caption"], f_cap, th["caption"], SS)
     text_centered(d, (cx, cy + Y_VALUE * SS), fmt(p["show"], p["decimals"]), f_val, th["value"])
-    text_centered(d, (cx, cy + Y_UNIT * SS), p["unit"], f_unit, th["unit"], SS)
+    if p["unit"]:
+        text_centered(d, (cx, cy + Y_UNIT * SS), p["unit"], f_unit, th["unit"], SS)
 
     return img.resize((DIAL, DIAL), Image.LANCZOS)
 

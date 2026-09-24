@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "app_gauge.h"
 #include "app_tests.h"
 #include "bsp.h"
 #include "esp_console.h"
@@ -20,6 +21,7 @@
 #include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "gauge_presets.h"
 #include "gfx.h"
 #include "soc/rtc_cntl_reg.h"
 
@@ -104,6 +106,62 @@ static int cmd_flush(int argc, char **argv)
     return 0;
 }
 
+static int cmd_gauge(int argc, char **argv)
+{
+    if (argc < 2) {
+        const gauge_preset_t *cur = app_gauge_current();
+        printf("Available gauges:\n");
+        for (const gauge_preset_t *p = gauge_presets_all(); p->id; p++) {
+            printf("  %-6s %s%s\n", p->id, p->name,
+                   (cur && strcmp(cur->id, p->id) == 0) ? "   <- active" : "");
+        }
+        printf("Usage: gauge <id>\n");
+        return 0;
+    }
+    const gauge_preset_t *p = gauge_preset_find(argv[1]);
+    if (!p) {
+        printf("Unknown gauge '%s'. Run `gauge` for the list.\n", argv[1]);
+        return 1;
+    }
+    app_gauge_select(p);
+    printf("Gauge -> %s\n", p->name);
+    return 0;
+}
+
+static int cmd_demo(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("Simulator is %s\n", app_gauge_is_demo() ? "ON" : "OFF");
+        return 0;
+    }
+    if (strcmp(argv[1], "on") == 0) {
+        app_gauge_set_demo(true);
+        printf("Simulator on\n");
+    } else if (strcmp(argv[1], "off") == 0) {
+        app_gauge_set_demo(false);
+        printf("Simulator off - use `value <n>`\n");
+    } else if (strcmp(argv[1], "sweep") == 0) {
+        app_gauge_sweep();
+        printf("Self-test sweep\n");
+    } else {
+        printf("Usage: demo [on|off|sweep]\n");
+        return 1;
+    }
+    return 0;
+}
+
+static int cmd_value(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("Usage: value <number>\n");
+        return 1;
+    }
+    const float v = strtof(argv[1], NULL);
+    app_gauge_set_value(v);
+    printf("Value -> %.2f (simulator off)\n", (double)v);
+    return 0;
+}
+
 static int cmd_free(int argc, char **argv)
 {
     (void)argc;
@@ -155,6 +213,9 @@ esp_err_t app_console_start(void)
         { .command = "test", .help = "Test screen: test [fill|bars|grid|circle|quad]",
           .func = &cmd_test },
         { .command = "next", .help = "Next test screen", .func = &cmd_next },
+        { .command = "gauge", .help = "List or select a gauge: gauge [id]", .func = &cmd_gauge },
+        { .command = "demo", .help = "Simulator: demo [on|off|sweep]", .func = &cmd_demo },
+        { .command = "value", .help = "Drive the needle: value <number>", .func = &cmd_value },
         { .command = "backlight", .help = "Backlight: backlight [0-100]", .func = &cmd_backlight },
         { .command = "flush", .help = "Show panel transfer statistics", .func = &cmd_flush },
         { .command = "free", .help = "Show heap usage", .func = &cmd_free },

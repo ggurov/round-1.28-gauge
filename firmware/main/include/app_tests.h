@@ -15,9 +15,6 @@ extern "C" {
 /* Draw one named test screen: "bars", "grid", "circle", "quad", "fill". */
 void app_show_test(const char *name);
 
-/* Quick colour-bar flash, then the grid.  Runs at boot. */
-void app_boot_sequence(void);
-
 /* Cycle to the next test screen. */
 void app_next_test(void);
 
