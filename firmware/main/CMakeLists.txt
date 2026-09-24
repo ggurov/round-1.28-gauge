@@ -1,11 +1,11 @@
 set(COMPONENT_SRCS
     "app_main.c"
     "app_console.c"
-    "gauge_demo.c"
+    "app_tests.c"
 )
 
 idf_component_register(
     SRCS ${COMPONENT_SRCS}
     INCLUDE_DIRS "include"
-    REQUIRES bsp gauge lvgl esp_lcd nvs_flash esp_timer driver console
+    REQUIRES bsp gfx console driver esp_timer freertos nvs_flash
 )

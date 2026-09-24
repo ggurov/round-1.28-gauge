@@ -1,17 +1,17 @@
 /*
- * bsp.c - Waveshare ESP32-S3-LCD-1.28 board support.
+ * bsp.c - Waveshare ESP32-S3-LCD-1.28 board support, no graphics library.
  *
  *   LCD   GC9A01A 240x240 round IPS, 4-wire SPI
- *   SCK   GPIO10
- *   MOSI  GPIO11
- *   CS    GPIO9
- *   DC    GPIO8
- *   RST   GPIO12
- *   BL    GPIO40   (LEDC PWM)
+ *   SCK   GPIO10      MOSI  GPIO11      CS   GPIO9
+ *   DC    GPIO8       RST   GPIO12      BL   GPIO40
  *
- * Everything here is deliberately defensive: a failure to bring the panel up
- * logs, unwinds and returns, leaving the UART console alive so the board can
- * always be recovered without touching the BOOT button.
+ * The panel init sequence is taken verbatim from Waveshare's own
+ * ESP32-S3-LCD-1.28-Test demo (LCD_1in28.cpp, LCD_1IN28_InitReg), not from
+ * esp_lcd_gc9a01's built-in table.  The two differ in the gate-driver (GOA)
+ * settings - esp_lcd uses 0x38 where Waveshare uses 0x18 for commands 0x62 and
+ * 0x63, and omits 0xBD, 0xBC and 0x35 entirely.  Wrong GOA timing is a known
+ * cause of whole bands of a panel staying dark, which is the fault this board
+ * shows, so the vendor sequence is the one to trust.
  */
 #include "bsp.h"
 
@@ -20,23 +20,17 @@
 #include "driver/ledc.h"
 #include "driver/spi_master.h"
 #include "esp_check.h"
-#include "esp_heap_caps.h"
 #include "esp_lcd_gc9a01.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
 #include "esp_lcd_panel_vendor.h"
 #include "esp_log.h"
-#include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
-#include "freertos/task.h"
 
 #define TAG "bsp"
 
-#define LCD_H_RES   CONFIG_BSP_LCD_H_RES
-#define LCD_V_RES   CONFIG_BSP_LCD_V_RES
-#define LCD_HOST    ((spi_host_device_t)CONFIG_BSP_LCD_SPI_HOST)
-
+#define LCD_HOST     ((spi_host_device_t)CONFIG_BSP_LCD_SPI_HOST)
 #define LCD_PIN_SCK  CONFIG_BSP_LCD_PIN_SCK
 #define LCD_PIN_MOSI CONFIG_BSP_LCD_PIN_MOSI
 #define LCD_PIN_CS   CONFIG_BSP_LCD_PIN_CS
@@ -45,217 +39,166 @@
 #define LCD_PIN_BL   CONFIG_BSP_LCD_PIN_BL
 
 #define LCD_CLK_HZ   (CONFIG_BSP_LCD_SPI_CLK_MHZ * 1000 * 1000)
-#define LCD_BUF_LINES CONFIG_BSP_LCD_BUFFER_LINES
 
-/* ESP-IDF does not emit CONFIG_* for boolean options left at their default of
- * n, so normalise them here rather than testing with #ifdef at each use. */
-#ifdef CONFIG_BSP_LCD_SWAP_XY
-#define LCD_SWAP_XY  true
-#else
-#define LCD_SWAP_XY  false
-#endif
-#ifdef CONFIG_BSP_LCD_MIRROR_X
-#define LCD_MIRROR_X true
-#else
-#define LCD_MIRROR_X false
-#endif
-#ifdef CONFIG_BSP_LCD_MIRROR_Y
-#define LCD_MIRROR_Y true
-#else
-#define LCD_MIRROR_Y false
-#endif
+/* -------------------------------------------------------------------------- */
+/* Waveshare's GC9A01A init sequence                                          */
+/* -------------------------------------------------------------------------- */
 
-#define LVGL_TASK_STACK   8192
-#define LVGL_TASK_PRIO    4
-#define LVGL_TASK_AFFINITY 1
-#define LVGL_TICK_PERIOD_US 2000
+static const gc9a01_lcd_init_cmd_t waveshare_init_cmds[] = {
+    {0xEF, (uint8_t []){0x00}, 0, 0},
+    {0xEB, (uint8_t []){0x14}, 1, 0},
+    {0xFE, (uint8_t []){0x00}, 0, 0},
+    {0xEF, (uint8_t []){0x00}, 0, 0},
+    {0xEB, (uint8_t []){0x14}, 1, 0},
+    {0x84, (uint8_t []){0x40}, 1, 0},
+    {0x85, (uint8_t []){0xFF}, 1, 0},
+    {0x86, (uint8_t []){0xFF}, 1, 0},
+    {0x87, (uint8_t []){0xFF}, 1, 0},
+    {0x88, (uint8_t []){0x0A}, 1, 0},
+    {0x89, (uint8_t []){0x21}, 1, 0},
+    {0x8A, (uint8_t []){0x00}, 1, 0},
+    {0x8B, (uint8_t []){0x80}, 1, 0},
+    {0x8C, (uint8_t []){0x01}, 1, 0},
+    {0x8D, (uint8_t []){0x01}, 1, 0},
+    {0x8E, (uint8_t []){0xFF}, 1, 0},
+    {0x8F, (uint8_t []){0xFF}, 1, 0},
 
-static const char *const k_tag = TAG;
+    {0xB6, (uint8_t []){0x00, 0x20}, 2, 0},
 
-static lv_display_t *s_disp;
+    /* Let the driver own MADCTL/COLMOD; 0x05 is the MCU-interface 16bpp value
+     * Waveshare uses.  esp_lcd's default of 0x55 is the RGB-interface value. */
+    {0x3A, (uint8_t []){0x05}, 1, 0},
+
+    {0x90, (uint8_t []){0x08, 0x08, 0x08, 0x08}, 4, 0},
+
+    {0xBD, (uint8_t []){0x06}, 1, 0},
+    {0xBC, (uint8_t []){0x00}, 1, 0},
+
+    {0xFF, (uint8_t []){0x60, 0x01, 0x04}, 3, 0},
+    {0xC3, (uint8_t []){0x13}, 1, 0},
+    {0xC4, (uint8_t []){0x13}, 1, 0},
+    {0xC9, (uint8_t []){0x22}, 1, 0},
+    {0xBE, (uint8_t []){0x11}, 1, 0},
+    {0xE1, (uint8_t []){0x10, 0x0E}, 2, 0},
+    {0xDF, (uint8_t []){0x21, 0x0C, 0x02}, 3, 0},
+
+    /* gamma */
+    {0xF0, (uint8_t []){0x45, 0x09, 0x08, 0x08, 0x26, 0x2A}, 6, 0},
+    {0xF1, (uint8_t []){0x43, 0x70, 0x72, 0x36, 0x37, 0x6F}, 6, 0},
+    {0xF2, (uint8_t []){0x45, 0x09, 0x08, 0x08, 0x26, 0x2A}, 6, 0},
+    {0xF3, (uint8_t []){0x43, 0x70, 0x72, 0x36, 0x37, 0x6F}, 6, 0},
+
+    {0xED, (uint8_t []){0x1B, 0x0B}, 2, 0},
+    {0xAE, (uint8_t []){0x77}, 1, 0},
+    {0xCD, (uint8_t []){0x63}, 1, 0},
+    {0x70, (uint8_t []){0x07, 0x07, 0x04, 0x0E, 0x0F, 0x09, 0x07, 0x08, 0x03}, 9, 0},
+    {0xE8, (uint8_t []){0x34}, 1, 0},
+
+    /* Gate driver (GOA) timing.  These are the bytes esp_lcd_gc9a01 gets
+     * differently - 0x18 here against 0x38 there. */
+    {0x62, (uint8_t []){0x18, 0x0D, 0x71, 0xED, 0x70, 0x70, 0x18, 0x0F, 0x71, 0xEF, 0x70, 0x70}, 12, 0},
+    {0x63, (uint8_t []){0x18, 0x11, 0x71, 0xF1, 0x70, 0x70, 0x18, 0x13, 0x71, 0xF3, 0x70, 0x70}, 12, 0},
+    {0x64, (uint8_t []){0x28, 0x29, 0xF1, 0x01, 0xF1, 0x00, 0x07}, 7, 0},
+    {0x66, (uint8_t []){0x3C, 0x00, 0xCD, 0x67, 0x45, 0x45, 0x10, 0x00, 0x00, 0x00}, 10, 0},
+    {0x67, (uint8_t []){0x00, 0x3C, 0x00, 0x00, 0x00, 0x01, 0x54, 0x10, 0x32, 0x98}, 10, 0},
+    {0x74, (uint8_t []){0x10, 0x85, 0x80, 0x00, 0x00, 0x4E, 0x00}, 7, 0},
+    {0x98, (uint8_t []){0x3E, 0x07}, 2, 0},
+
+    {0x35, (uint8_t []){0x00}, 0, 0},   /* tearing effect line on */
+    {0x21, (uint8_t []){0x00}, 0, 0},   /* invert on (matches Waveshare) */
+    {0x11, (uint8_t []){0x00}, 0, 120}, /* sleep out */
+    {0x29, (uint8_t []){0x00}, 0, 20},  /* display on */
+};
+
+/* -------------------------------------------------------------------------- */
+
 static esp_lcd_panel_handle_t s_panel;
-static SemaphoreHandle_t s_lvgl_mutex;
-static esp_timer_handle_t s_tick_timer;
-static int s_backlight = -1;
-
-/* Flush diagnostics.  `flush stats` on the console prints these. */
-static volatile uint32_t s_flush_count;
-static volatile uint32_t s_flush_errors;
-static volatile uint32_t s_flush_timeouts;
-static volatile bool     s_flush_sync = true;
 static SemaphoreHandle_t s_flush_done;
+static int s_backlight = -1;
+static volatile uint32_t s_flush_count;
 
-void bsp_flush_set_sync(bool sync);
-bool bsp_flush_get_sync(void);
-void bsp_flush_get_stats(uint32_t *count, uint32_t *errors, uint32_t *timeouts);
-
-void bsp_flush_set_sync(bool sync)
-{
-    s_flush_sync = sync;
-}
-
-bool bsp_flush_get_sync(void)
-{
-    return s_flush_sync;
-}
-
-void bsp_flush_get_stats(uint32_t *count, uint32_t *errors, uint32_t *timeouts)
-{
-    if (count)    *count = s_flush_count;
-    if (errors)   *errors = s_flush_errors;
-    if (timeouts) *timeouts = s_flush_timeouts;
-}
-
-#ifdef CONFIG_BSP_LCD_RENDER_FULL
-const char *bsp_render_mode(void)      { return "full"; }
-uint32_t bsp_draw_buffer_bytes(void)   { return LCD_H_RES * LCD_V_RES * sizeof(uint16_t); }
-#else
-const char *bsp_render_mode(void)      { return "partial"; }
-uint32_t bsp_draw_buffer_bytes(void)   { return LCD_H_RES * LCD_BUF_LINES * sizeof(uint16_t); }
-#endif
-
-/* -------------------------------------------------------------------------- */
-/* byte order                                                                 */
-/* -------------------------------------------------------------------------- */
-
-/* LVGL hands us little-endian RGB565; the GC9A01A wants the high byte first. */
-static inline void swap_rgb565_bytes(uint8_t *buf, size_t pixel_count)
+/* LVGL-less byte order fix: the panel wants the high byte of each RGB565
+ * pixel first, our framebuffers are plain little-endian. */
+static inline void swap_rgb565(uint16_t *px, size_t count)
 {
 #if CONFIG_BSP_LCD_SWAP_RGB565_BYTES
-    for (size_t i = 0; i < pixel_count; i++) {
-        uint8_t tmp = buf[0];
-        buf[0] = buf[1];
-        buf[1] = tmp;
-        buf += 2;
+    for (size_t i = 0; i < count; i++) {
+        px[i] = (uint16_t)((px[i] >> 8) | (px[i] << 8));
     }
 #else
-    (void)buf;
-    (void)pixel_count;
+    (void)px;
+    (void)count;
 #endif
 }
 
-/* -------------------------------------------------------------------------- */
-/* LVGL plumbing                                                              */
-/* -------------------------------------------------------------------------- */
-
-static bool lcd_color_trans_done_cb(esp_lcd_panel_io_handle_t io,
-                                    esp_lcd_panel_io_event_data_t *edata,
-                                    void *user_ctx)
+static bool on_color_trans_done(esp_lcd_panel_io_handle_t io,
+                                esp_lcd_panel_io_event_data_t *edata,
+                                void *user_ctx)
 {
     (void)io;
     (void)edata;
-    lv_display_t *disp = (lv_display_t *)user_ctx;
-    if (s_flush_sync) {
-        /* Hand back to lcd_flush_cb, which owns the flush_ready() call. */
-        BaseType_t woken = pdFALSE;
-        if (s_flush_done) {
-            xSemaphoreGiveFromISR(s_flush_done, &woken);
-        }
-        return woken == pdTRUE;
+    (void)user_ctx;
+    BaseType_t woken = pdFALSE;
+    if (s_flush_done) {
+        xSemaphoreGiveFromISR(s_flush_done, &woken);
     }
-    if (disp) {
-        lv_display_flush_ready(disp);
-    }
-    return false;
+    return woken == pdTRUE;
 }
 
-static void lcd_flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
+esp_err_t bsp_lcd_draw_bitmap(int x0, int y0, int x1, int y1, const uint16_t *pixels)
 {
-    esp_lcd_panel_handle_t panel = (esp_lcd_panel_handle_t)lv_display_get_user_data(disp);
-    if (!panel) {
-        lv_display_flush_ready(disp);
-        return;
+    if (!s_panel || !pixels || x1 <= x0 || y1 <= y0) {
+        return ESP_ERR_INVALID_ARG;
     }
 
-    const int w = area->x2 - area->x1 + 1;
-    const int h = area->y2 - area->y1 + 1;
+    const size_t count = (size_t)(x1 - x0) * (size_t)(y1 - y0);
+    swap_rgb565((uint16_t *)pixels, count);
 
+    /* Drain a stale completion before starting a new transfer. */
+    if (s_flush_done) {
+        xSemaphoreTake(s_flush_done, 0);
+    }
+
+    esp_err_t err = esp_lcd_panel_draw_bitmap(s_panel, x0, y0, x1, y1, pixels);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    if (s_flush_done && xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
     s_flush_count++;
+    return ESP_OK;
+}
 
-    swap_rgb565_bytes(px_map, (size_t)w * (size_t)h);
+esp_err_t bsp_lcd_fill_rect(int x0, int y0, int x1, int y1, uint16_t colour)
+{
+    static uint16_t line[BSP_LCD_H_RES];
 
-    if (s_flush_sync) {
-        /* Drain any previous transfer before touching the buffer again. */
-        if (s_flush_done) {
-            xSemaphoreTake(s_flush_done, 0);
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > BSP_LCD_H_RES) x1 = BSP_LCD_H_RES;
+    if (y1 > BSP_LCD_V_RES) y1 = BSP_LCD_V_RES;
+    if (x1 <= x0 || y1 <= y0) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    for (int x = x0; x < x1; x++) {
+        line[x] = colour;
+    }
+
+    for (int y = y0; y < y1; y++) {
+        esp_err_t err = bsp_lcd_draw_bitmap(x0, y, x1, y + 1, line + x0);
+        if (err != ESP_OK) {
+            return err;
         }
     }
-
-    if (esp_lcd_panel_draw_bitmap(panel, area->x1, area->y1, area->x2 + 1, area->y2 + 1, px_map) != ESP_OK) {
-        s_flush_errors++;
-        lv_display_flush_ready(disp);
-        return;
-    }
-
-    if (s_flush_sync) {
-        /*
-         * Complete the transfer before telling LVGL the buffer is free.  The
-         * async path hands this to the ISR, which lets LVGL start rendering
-         * the next area while the DMA is still reading this one; if anything
-         * in that handshake slips, whole tiles are lost and only come back
-         * when the needle sweeps over them again.
-         */
-        if (s_flush_done && xSemaphoreTake(s_flush_done, pdMS_TO_TICKS(500)) != pdTRUE) {
-            s_flush_timeouts++;
-        }
-    }
-
-    lv_display_flush_ready(disp);
+    return ESP_OK;
 }
 
-static void lvgl_tick_cb(void *arg)
+uint32_t bsp_lcd_flush_count(void)
 {
-    (void)arg;
-    lv_tick_inc(LVGL_TICK_PERIOD_US / 1000);
-}
-
-/*
- * This board loses display tiles: an area is painted correctly, then goes black
- * a fraction of a second later and stays black until something invalidates it
- * again.  Repainting the whole screen periodically makes the dial heal itself.
- */
-static void heal_timer_cb(lv_timer_t *t)
-{
-    (void)t;
-    lv_obj_t *scr = lv_screen_active();
-    if (scr) {
-        lv_obj_invalidate(scr);
-    }
-}
-
-static void lvgl_task(void *arg)
-{
-    (void)arg;
-    uint32_t delay_ms = 5;
-    for (;;) {
-        if (bsp_lvgl_lock(-1)) {
-            uint32_t busy = lv_timer_handler();
-            bsp_lvgl_unlock();
-            delay_ms = busy < 5 ? busy : 5;
-            if (delay_ms < 1) {
-                delay_ms = 1;
-            }
-        } else {
-            delay_ms = 5;
-        }
-        vTaskDelay(pdMS_TO_TICKS(delay_ms));
-    }
-}
-
-bool bsp_lvgl_lock(int timeout_ms)
-{
-    if (!s_lvgl_mutex) {
-        return false;
-    }
-    TickType_t ticks = (timeout_ms < 0) ? portMAX_DELAY : pdMS_TO_TICKS(timeout_ms);
-    return xSemaphoreTakeRecursive(s_lvgl_mutex, ticks) == pdTRUE;
-}
-
-void bsp_lvgl_unlock(void)
-{
-    if (s_lvgl_mutex) {
-        xSemaphoreGiveRecursive(s_lvgl_mutex);
-    }
+    return s_flush_count;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -289,7 +232,7 @@ static esp_err_t backlight_init(void)
         .freq_hz = 5000,
         .clk_cfg = LEDC_AUTO_CLK,
     };
-    ESP_RETURN_ON_ERROR(ledc_timer_config(&timer), k_tag, "ledc timer");
+    ESP_RETURN_ON_ERROR(ledc_timer_config(&timer), TAG, "ledc timer");
 
     ledc_channel_config_t ch = {
         .gpio_num = LCD_PIN_BL,
@@ -299,7 +242,7 @@ static esp_err_t backlight_init(void)
         .duty = 0,
         .hpoint = 0,
     };
-    ESP_RETURN_ON_ERROR(ledc_channel_config(&ch), k_tag, "ledc channel");
+    ESP_RETURN_ON_ERROR(ledc_channel_config(&ch), TAG, "ledc channel");
     bsp_backlight_set(CONFIG_BSP_BACKLIGHT_DEFAULT_PERCENT);
 #else
     s_backlight = 0;
@@ -311,17 +254,24 @@ static esp_err_t backlight_init(void)
 /* panel                                                                      */
 /* -------------------------------------------------------------------------- */
 
-static esp_err_t panel_init(void)
+esp_err_t bsp_display_init(void)
 {
+    if (s_panel) {
+        return ESP_OK;
+    }
+
+    s_flush_done = xSemaphoreCreateBinary();
+    ESP_RETURN_ON_FALSE(s_flush_done, ESP_ERR_NO_MEM, TAG, "flush semaphore");
+
     spi_bus_config_t bus_cfg = {
         .sclk_io_num = LCD_PIN_SCK,
         .mosi_io_num = LCD_PIN_MOSI,
         .miso_io_num = -1,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = LCD_H_RES * LCD_V_RES * sizeof(uint16_t),
+        .max_transfer_sz = BSP_LCD_H_RES * BSP_LCD_V_RES * sizeof(uint16_t),
     };
-    ESP_RETURN_ON_ERROR(spi_bus_initialize(LCD_HOST, &bus_cfg, SPI_DMA_CH_AUTO), k_tag, "spi bus");
+    ESP_RETURN_ON_ERROR(spi_bus_initialize(LCD_HOST, &bus_cfg, SPI_DMA_CH_AUTO), TAG, "spi bus");
 
     esp_lcd_panel_io_handle_t io = NULL;
     esp_lcd_panel_io_spi_config_t io_cfg = {
@@ -331,115 +281,46 @@ static esp_err_t panel_init(void)
         .lcd_cmd_bits = 8,
         .lcd_param_bits = 8,
         .spi_mode = 0,
-        .trans_queue_depth = 10,
+        .trans_queue_depth = 4,
     };
     ESP_RETURN_ON_ERROR(esp_lcd_new_panel_io_spi((esp_lcd_spi_bus_handle_t)LCD_HOST, &io_cfg, &io),
-                        k_tag, "panel io");
+                        TAG, "panel io");
 
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_register_event_callbacks(
-                            io,
-                            &(esp_lcd_panel_io_callbacks_t){ .on_color_trans_done = lcd_color_trans_done_cb },
-                            s_disp),
-                        k_tag, "io callbacks");
+    esp_lcd_panel_io_callbacks_t cbs = { .on_color_trans_done = on_color_trans_done };
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_io_register_event_callbacks(io, &cbs, NULL), TAG, "io callbacks");
+
+    static gc9a01_vendor_config_t vendor_cfg = {
+        .init_cmds = waveshare_init_cmds,
+        .init_cmds_size = sizeof(waveshare_init_cmds) / sizeof(waveshare_init_cmds[0]),
+    };
 
     esp_lcd_panel_dev_config_t dev_cfg = {
         .reset_gpio_num = LCD_PIN_RST,
         .rgb_ele_order = LCD_RGB_ELEMENT_ORDER_BGR,
         .bits_per_pixel = 16,
+        .vendor_config = &vendor_cfg,
     };
-    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_gc9a01(io, &dev_cfg, &s_panel), k_tag, "gc9a01");
+    ESP_RETURN_ON_ERROR(esp_lcd_new_panel_gc9a01(io, &dev_cfg, &s_panel), TAG, "gc9a01");
 
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(s_panel), k_tag, "panel reset");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_panel), k_tag, "panel init");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_invert_color(s_panel, CONFIG_BSP_LCD_INVERT_COLOR), k_tag, "invert");
-    if (LCD_SWAP_XY) {
-        ESP_RETURN_ON_ERROR(esp_lcd_panel_swap_xy(s_panel, true), k_tag, "swap_xy");
-    }
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(s_panel, LCD_MIRROR_X, LCD_MIRROR_Y), k_tag, "mirror");
-    ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_panel, true), k_tag, "disp on");
-
-    ESP_LOGI(k_tag, "GC9A01A up: %dx%d @ %d MHz", LCD_H_RES, LCD_V_RES, CONFIG_BSP_LCD_SPI_CLK_MHZ);
-    return ESP_OK;
-}
-
-/* -------------------------------------------------------------------------- */
-/* init                                                                       */
-/* -------------------------------------------------------------------------- */
-
-esp_err_t bsp_display_init(void)
-{
-    if (s_disp) {
-        return ESP_OK;
-    }
-
-    s_lvgl_mutex = xSemaphoreCreateRecursiveMutex();
-    ESP_RETURN_ON_FALSE(s_lvgl_mutex, ESP_ERR_NO_MEM, k_tag, "lvgl mutex");
-
-    s_flush_done = xSemaphoreCreateBinary();
-    ESP_RETURN_ON_FALSE(s_flush_done, ESP_ERR_NO_MEM, k_tag, "flush semaphore");
-
-    lv_init();
-
-    s_disp = lv_display_create(LCD_H_RES, LCD_V_RES);
-    ESP_RETURN_ON_FALSE(s_disp, ESP_ERR_NO_MEM, k_tag, "lv_display_create");
-    lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
-
-    const size_t buf_bytes = LCD_H_RES * LCD_V_RES * sizeof(uint16_t);
-#ifdef CONFIG_BSP_LCD_RENDER_FULL
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_reset(s_panel), TAG, "panel reset");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_init(s_panel), TAG, "panel init");
     /*
-     * One full-screen buffer, rendered and pushed as a single rectangle.  See
-     * the Kconfig help: the partial path loses tiles on this board.
+     * Do NOT call esp_lcd_panel_invert_color() here.  Waveshare's sequence
+     * ends with 0x21 (INVON) itself, and the driver's API sends 0x20 (INVOFF)
+     * when passed false - which cancels the vendor sequence and leaves the
+     * panel showing a photographic negative.
      */
-    void *buf1 = heap_caps_malloc(buf_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    ESP_RETURN_ON_FALSE(buf1, ESP_ERR_NO_MEM, k_tag, "draw buffer (%u B)", (unsigned)buf_bytes);
-    lv_display_set_buffers(s_disp, buf1, NULL, buf_bytes, LV_DISPLAY_RENDER_MODE_FULL);
-    ESP_LOGI(k_tag, "render mode: FULL (%u B single buffer)", (unsigned)buf_bytes);
-#else
-    const size_t part_bytes = LCD_H_RES * LCD_BUF_LINES * sizeof(uint16_t);
-    void *buf1 = heap_caps_malloc(part_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    void *buf2 = heap_caps_malloc(part_bytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-    ESP_RETURN_ON_FALSE(buf1 && buf2, ESP_ERR_NO_MEM, k_tag, "draw buffers (%u B each)", (unsigned)part_bytes);
-    lv_display_set_buffers(s_disp, buf1, buf2, part_bytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
-    ESP_LOGI(k_tag, "render mode: PARTIAL (%u B x2 buffers)", (unsigned)part_bytes);
-#endif
-    lv_display_set_flush_cb(s_disp, lcd_flush_cb);
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_mirror(s_panel, false, false), TAG, "mirror");
+    ESP_RETURN_ON_ERROR(esp_lcd_panel_disp_on_off(s_panel, true), TAG, "disp on");
 
-    esp_err_t err = panel_init();
-    if (err != ESP_OK) {
-        return err;
-    }
-    lv_display_set_user_data(s_disp, s_panel);
+    ESP_RETURN_ON_ERROR(backlight_init(), TAG, "backlight");
 
-    ESP_RETURN_ON_ERROR(backlight_init(), k_tag, "backlight");
-
-    const esp_timer_create_args_t tick_args = {
-        .callback = lvgl_tick_cb,
-        .name = "lvgl_tick",
-    };
-    ESP_RETURN_ON_ERROR(esp_timer_create(&tick_args, &s_tick_timer), k_tag, "tick timer");
-    ESP_RETURN_ON_ERROR(esp_timer_start_periodic(s_tick_timer, LVGL_TICK_PERIOD_US), k_tag, "tick start");
-
-    BaseType_t ok = xTaskCreatePinnedToCore(lvgl_task, "lvgl", LVGL_TASK_STACK, NULL,
-                                            LVGL_TASK_PRIO, NULL, LVGL_TASK_AFFINITY);
-    ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, k_tag, "lvgl task");
-
-    /* Paint the screen black straight away so a failed app still looks tidy. */
-    if (bsp_lvgl_lock(0)) {
-        lv_obj_t *scr = lv_screen_active();
-        lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
-        lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-#if CONFIG_BSP_LCD_HEAL_PERIOD_MS > 0
-        lv_timer_create(heal_timer_cb, CONFIG_BSP_LCD_HEAL_PERIOD_MS, NULL);
-#endif
-        bsp_lvgl_unlock();
-    }
-
-    ESP_LOGI(k_tag, "display ready (%u B draw buffers, LVGL %d.%d.%d)",
-             (unsigned)buf_bytes, LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
+    ESP_LOGI(TAG, "GC9A01A up: %dx%d @ %d MHz (Waveshare vendor init)",
+             BSP_LCD_H_RES, BSP_LCD_V_RES, CONFIG_BSP_LCD_SPI_CLK_MHZ);
     return ESP_OK;
 }
 
-lv_display_t *bsp_display_get(void)
+esp_lcd_panel_handle_t bsp_lcd_panel(void)
 {
-    return s_disp;
+    return s_panel;
 }

@@ -1,23 +1,23 @@
 /*
- * app_main.c - Round 1.28 Gauge
+ * app_main.c - Round 1.28 Gauge bring-up.
  *
- * Waveshare ESP32-S3-LCD-1.28 turned into a GReddy-flavoured automotive
- * instrument.  Current state: RPM tachometer with a self-test sweep and an
- * engine simulator, switchable to temperature / boost / volts at runtime.
+ * No graphics library.  The panel is driven from a plain RGB565 framebuffer in
+ * the gfx component, and this app currently draws test screens so the panel can
+ * be verified before any gauge code is layered on top.
  *
- * Boot order matters: the console comes up before the display so that a dead
- * panel, a blown SPI configuration or a bad LVGL theme can never lock you out
- * of the board.
+ * Order matters: the console comes up before the display so a dead panel never
+ * locks you out of the board.
  */
 #include <stdio.h>
 
 #include "app_console.h"
+#include "app_tests.h"
 #include "bsp.h"
 #include "esp_err.h"
 #include "esp_log.h"
-#include "gauge_demo.h"
-#include "nvs_flash.h"
 #include "esp_system.h"
+#include "gfx.h"
+#include "nvs_flash.h"
 
 static const char *TAG = "app";
 
@@ -31,30 +31,27 @@ void app_main(void)
     ESP_ERROR_CHECK(err);
 
     printf("\n\n");
-    ESP_LOGI(TAG, "round-1.28-gauge booting (ESP-IDF %s, chip %s)",
+    ESP_LOGI(TAG, "round-1.28-gauge bring-up (ESP-IDF %s, chip %s, no LVGL)",
              esp_get_idf_version(), CONFIG_IDF_TARGET);
 
-    /* 1. Console first - this is the recovery path. */
+    /* 1. Console first - the recovery path. */
     ESP_ERROR_CHECK(app_console_start());
 
     /* 2. Display, but never fatally. */
     err = bsp_display_init();
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "display init failed: %s (0x%x)", esp_err_to_name(err), err);
-        ESP_LOGW(TAG, "No dial, but the console is alive.");
-        ESP_LOGW(TAG, "Check Pins/SPI under `idf.py menuconfig` -> Round gauge BSP,");
-        ESP_LOGW(TAG, "then `bootloader` + reflash. Try 40 MHz if 80 MHz is unstable.");
+        ESP_LOGW(TAG, "No display, but the console is alive.");
+        ESP_LOGW(TAG, "Check pins and clock under menuconfig -> Round gauge BSP.");
+        ESP_LOGW(TAG, "Then `bootloader` and reflash.");
         return;
     }
 
-    /* 3. Gauge + simulator. */
-    err = gauge_demo_start();
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "gauge start failed: %s (0x%x)", esp_err_to_name(err), err);
-        ESP_LOGW(TAG, "Console still alive; `bootloader` to reflash.");
-        return;
-    }
+    gfx_init();
+
+    /* 3. Panel self-test, then leave a test screen up. */
+    app_boot_sequence();
 
     printf("\n");
-    ESP_LOGI(TAG, "Running. Type `help` for commands, `bootloader` to reflash.");
+    ESP_LOGI(TAG, "Ready. `test <fill|bars|grid|circle|quad>`, `next`, `help`.");
 }

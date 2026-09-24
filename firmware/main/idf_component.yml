@@ -1,7 +1,12 @@
-# Managed components pulled from components.espressif.com at configure time.
+# No managed components yet.
+#
+# lvgl/lvgl was dropped deliberately: the gauge now draws straight into an
+# RGB565 framebuffer through the gfx component, which is a fraction of the
+# size and gives exact control over what reaches the panel.
+#
+# espressif/esp_lcd_gc9a01 is still used for the panel's command interface,
+# but with Waveshare's own init sequence supplied through vendor_config (see
+# docs/hardware.md for why).
 dependencies:
   idf: ">=5.3"
-  # Graphics library - the whole point of this project.
-  lvgl/lvgl: "^9.2"
-  # GC9A01A 240x240 round panel driver over SPI.
   espressif/esp_lcd_gc9a01: "^2"

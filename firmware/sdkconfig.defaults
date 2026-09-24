@@ -1,23 +1,25 @@
 # ---------------------------------------------------------------------------
 # Waveshare ESP32-S3-LCD-1.28  (ESP32-S3R2, 16 MB flash, 2 MB in-package PSRAM)
+#
+# No graphics library.  The gauge draws into a plain RGB565 framebuffer in the
+# gfx component; see README.md for why LVGL was dropped.
 # ---------------------------------------------------------------------------
 CONFIG_IDF_TARGET="esp32s3"
 
 # --- Flash: Winbond W25Q128JV, 16 MB, quad -----------------------------------
-# 40 MHz rather than the chip's 80 MHz: the board browns out while the
-# bootloader hashes a large image at 80 MHz on USB power.  Raise it once the
-# supply is known good (see docs/hardware.md).
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
 CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_40M=y
 CONFIG_ESPTOOLPY_BEFORE_RESET=y
 CONFIG_ESPTOOLPY_AFTER_RESET=y
 CONFIG_ESPTOOLPY_MONITOR_BAUD=115200
-# esptool cannot reset this board into or out of the bootloader, so don't make
-# it waste time on a reset sequence that goes nowhere.
+# esptool cannot reset this board into the bootloader (DTR is not wired to the
+# boot strap), so do not waste time on a reset sequence that goes nowhere.
+# Use the `bootloader` console command instead.
 CONFIG_ESPTOOLPY_BEFORE_NORESET=y
 
 # --- Partition table ---------------------------------------------------------
+# A factory slot plus two OTA slots; see partitions.csv.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 
@@ -31,42 +33,8 @@ CONFIG_ESP_CONSOLE_UART_DEFAULT=y
 CONFIG_ESP_CONSOLE_UART_BAUDRATE=115200
 CONFIG_ESP_CONSOLE_UART_NUM=0
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
-CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
-# --- Display ----------------------------------------------------------------
-# Full-frame rendering: the partial-tile path loses regions on this board.
-CONFIG_BSP_LCD_RENDER_FULL=n
-CONFIG_BSP_LCD_SPI_CLK_MHZ=20
-CONFIG_BSP_BACKLIGHT_DEFAULT_PERCENT=35
-
-# --- PSRAM -------------------------------------------------------------------# Present (2 MB, in-package, quad) but deliberately left OFF for the first
-# bring-up: nothing in the demo needs it and keeping it disabled removes a
-# whole class of boot-time failure modes.  Flip CONFIG_SPIRAM=y to enable.
+# --- PSRAM -------------------------------------------------------------------
+# Present (2 MB, in-package, quad) but not needed: the framebuffer is 115 KB
+# and there is ~240 KB of internal heap free.  Enable if assets ever need it.
 CONFIG_SPIRAM=n
-
-# --- LVGL --------------------------------------------------------------------
-# Only what the gauge actually uses.  LVGL's examples and demos compile to a
-# lot of flash, and every extra kilobyte is more work for the bootloader while
-# it hashes the image - which is exactly when this board browns out.
-CONFIG_LV_COLOR_DEPTH_16=y
-CONFIG_LV_USE_SCALE=y
-CONFIG_LV_USE_ARC=y
-CONFIG_LV_USE_LINE=y
-CONFIG_LV_USE_IMAGE=y
-CONFIG_LV_USE_LABEL=y
-CONFIG_LV_BUILD_EXAMPLES=n
-CONFIG_LV_USE_DEMO_WIDGETS=n
-CONFIG_LV_USE_DEMO_KEYPAD_AND_ENCODER=n
-CONFIG_LV_USE_DEMO_BENCHMARK=n
-CONFIG_LV_USE_DEMO_STRESS=n
-CONFIG_LV_USE_DEMO_MUSIC=n
-CONFIG_LV_USE_DEMO_FLEX_LAYOUT=n
-CONFIG_LV_USE_DEMO_MULTILANG=n
-# Exactly the faces gauge_theme.c references; a contract test keeps this in
-# step so a theme can never ask for a font that is not there.
-CONFIG_LV_FONT_MONTSERRAT_10=y
-CONFIG_LV_FONT_MONTSERRAT_12=y
-CONFIG_LV_FONT_MONTSERRAT_14=y
-CONFIG_LV_FONT_MONTSERRAT_16=y
-CONFIG_LV_FONT_MONTSERRAT_20=y
-CONFIG_LV_FONT_MONTSERRAT_30=y
