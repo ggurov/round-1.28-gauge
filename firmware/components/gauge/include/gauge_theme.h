@@ -79,7 +79,7 @@ typedef struct {
 
 /*
  * GReddy-inspired: black face, phosphor-green scale, orange blade needle,
- * magenta warning band.  The wordmark shipped in the presets is our own - the
+ * red warning band.  The wordmark shipped in the presets is our own - the
  * layout and palette are a homage, not a copy of anyone's trademark.
  */
 extern const gauge_theme_t gauge_theme_greddy;

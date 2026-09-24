@@ -15,7 +15,7 @@ const gauge_theme_t gauge_theme_greddy = {
     .label           = 0x46F08A,
     .band            = 0x2BE06A,
     .band_glow       = 0x0E8B3C,
-    .alarm           = 0xFF2D9E,
+    .alarm           = 0xFF1A1A,
 
     .needle          = 0xFF3B0A,
     .needle_hub      = 0x0A0A0A,
