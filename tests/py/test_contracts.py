@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -190,12 +191,73 @@ def test_no_lvgl() -> None:
     check("no source includes lvgl", not offenders, f"{offenders}")
 
 
+# ---------------------------------------------------------------------------
+# 5. documentation links resolve
+# ---------------------------------------------------------------------------
+def test_doc_links() -> None:
+    print("\n  [contract/docs]")
+
+    md_files = []
+    for root, dirs, files in os.walk(REPO):
+        dirs[:] = [d for d in dirs if d not in (".git", "build", "managed_components")]
+        for fn in files:
+            if fn.endswith(".md"):
+                md_files.append(os.path.join(root, fn))
+
+    check("markdown files found", len(md_files) > 0)
+
+    # collect every relative link/image target and where it came from
+    targets: dict[str, list[str]] = {}
+    for path in md_files:
+        rel_md = os.path.relpath(path, REPO).replace("\\", "/")
+        for match in re.finditer(r"!?\[[^\]]*\]\(([^)]+)\)", read(path)):
+            target = match.group(1).strip()
+            if target.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            target = target.split("#", 1)[0].strip()
+            if not target:
+                continue
+            resolved = os.path.normpath(os.path.join(os.path.dirname(path), target))
+            targets.setdefault(resolved, []).append(rel_md)
+
+    check("markdown links a relative file", len(targets) > 0)
+
+    missing = [p for p in targets if not os.path.exists(p)]
+    check("every relative link points at a file that exists",
+          not missing,
+          "\n          ".join(f"{os.path.relpath(p, REPO).replace(chr(92), '/')} "
+                             f"(linked from {', '.join(targets[p])})" for p in missing))
+
+    # An ignored file is not on GitHub, so the link is broken there even though
+    # it works locally.  This is exactly how the README's dial preview rotted.
+    if missing:
+        return
+
+    rel_to_abs = {os.path.relpath(p, REPO).replace("\\", "/"): p for p in targets}
+    try:
+        proc = subprocess.run(["git", "check-ignore", "--stdin"], cwd=REPO,
+                              input="\n".join(rel_to_abs), capture_output=True,
+                              text=True)
+    except OSError:
+        return
+
+    ignored = [ln.strip().replace("\\", "/")
+               for ln in (proc.stdout or "").splitlines() if ln.strip()]
+    detail = "\n          ".join(
+        f"{rel} is gitignored, so it will 404 on GitHub "
+        f"(linked from {', '.join(targets[rel_to_abs[rel]])})"
+        for rel in ignored if rel in rel_to_abs)
+    check("every linked file is tracked by git (not gitignored)",
+          not ignored, detail)
+
+
 def main() -> int:
     print("round-1.28-gauge contract checks")
     test_font_generator()
     test_all_drawn_text_is_renderable()
     test_preview_matches_firmware()
     test_no_lvgl()
+    test_doc_links()
 
     print("\n-------------------- summary --------------------")
     print(f"  checks: {CHECKS} run, {len(FAILURES)} failed")

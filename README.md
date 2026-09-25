@@ -192,7 +192,9 @@ details that make it read as one:
 | Branding | `epicEFI` above the hub |
 
 `tools/render_preview.py` renders every preset on the host so the design can be
-reviewed without flashing.
+reviewed without flashing — the four instruments side by side:
+
+![all four presets](tools/preview/dial_all.png)
 
 ## Roadmap
 

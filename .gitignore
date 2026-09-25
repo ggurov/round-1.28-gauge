@@ -4,11 +4,6 @@ firmware/managed_components/
 firmware/sdkconfig
 firmware/sdkconfig.old
 firmware/dependencies.lock
-tests/device/build/
-tests/device/sdkconfig
-tests/device/sdkconfig.old
-tests/device/dependencies.lock
-tests/device/managed_components/
 *.bin.tmp
 
 # Host build output
@@ -17,7 +12,11 @@ tests/device/managed_components/
 # Host tooling
 tools/__pycache__/
 tools/.venv/
-tools/preview/
+
+# Generated preview images.  The four dial renders and the sheet are tracked
+# because README.md embeds them; these are throwaway intermediates.
+tools/preview/*_2x.png
+tools/preview/needle.png
 
 # Editors / OS
 .vscode/
